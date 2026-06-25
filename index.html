@@ -1502,10 +1502,43 @@ function selectTime(t) {
 }
 
 function validatePatient() {
-  const ok = ['p-name','p-phone','p-email','p-age'].every(id=>document.getElementById(id).value.trim())
+  const phone = document.getElementById('p-phone').value.trim();
+  const email = document.getElementById('p-email').value.trim();
+
+  // Phone: 11 digits, 03 se shuru ho
+  const phoneValid = /^03[0-9]{9}$/.test(phone);
+
+  // Email: valid format
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  const ok = document.getElementById('p-name').value.trim()
+    && document.getElementById('p-age').value.trim()
     && document.getElementById('p-gender').value
-    && document.getElementById('p-type').value;
+    && document.getElementById('p-type').value
+    && phoneValid
+    && emailValid;
+
   document.getElementById('btn-3-next').disabled = !ok;
+
+  // Phone error message
+  const phoneField = document.getElementById('p-phone');
+  if (phone && !phoneValid) {
+    phoneField.style.borderColor = '#dc2626';
+    phoneField.title = '11 digit ka Pakistani number likhen (03XXXXXXXXX)';
+  } else {
+    phoneField.style.borderColor = '';
+    phoneField.title = '';
+  }
+
+  // Email error message
+  const emailField = document.getElementById('p-email');
+  if (email && !emailValid) {
+    emailField.style.borderColor = '#dc2626';
+    emailField.title = 'Valid email likhen (example@gmail.com)';
+  } else {
+    emailField.style.borderColor = '';
+    emailField.title = '';
+  }
 }
 
 function goBookStep(n) {
@@ -1515,6 +1548,16 @@ function goBookStep(n) {
     ps.classList.remove('active','done');
     if(i<n) ps.classList.add('done');
     else if(i===n) ps.classList.add('active');
+  }
+  if(n===2) {
+    renderTimeSlots(); // turant local state se refresh karo
+    if(state.doctor && window.loadBookedSlotsFromDB) {
+      // ☁️ Background mein fresh slots bhi le aao (dusre browsers ki bookings ke liye)
+      window.loadBookedSlotsFromDB(state.doctor).then(dbSlots => {
+        Object.assign(bookedSlots, dbSlots);
+        renderTimeSlots();
+      });
+    }
   }
   if(n===4) renderConfirm();
   window.scrollTo({top:0,behavior:'smooth'});
@@ -1641,6 +1684,7 @@ async function confirmBooking() {
   // Save booked slot locally (instant UI update)
   const slotKey = `${state.date}|${state.time}|${state.doctor}`;
   bookedSlots[slotKey] = true;
+  renderTimeSlots(); // ✅ slot grid ko turant refresh karo taake yeh slot fauran "booked" dikhay
 
   // Store current booking for cancel flow
   currentBooking = {
