@@ -1,0 +1,1959 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta name="google-site-verification" content="UvQxVPWszxpa6qLpW49lIgOEuZa0xL4EpTwQyOub1Yk"/>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedConnect — Book a Doctor Appointment</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<!-- ══════════════════════════════════════════════════════════════
+  ✅ MEDCONNECT BACKEND — SUPABASE + EMAILJS (FULLY WORKING)
+  ══════════════════════════════════════════════════════════════
+
+  📦 STEP 1 — SUPABASE SETUP (Free Database):
+  ─────────────────────────────────────────────
+  1. https://supabase.com par jao → "Start your project" → Sign up free
+  2. "New project" banao → naam likho (e.g. medconnect) → password set karo → Create
+  3. Left sidebar → SQL Editor → New query → paste karo:
+
+  CREATE TABLE appointments (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    ref_number TEXT NOT NULL,
+    doctor_id INTEGER NOT NULL,
+    doctor_name TEXT NOT NULL,
+    specialty TEXT NOT NULL,
+    date TEXT NOT NULL,
+    time TEXT NOT NULL,
+    patient_name TEXT NOT NULL,
+    patient_age TEXT,
+    patient_phone TEXT NOT NULL,
+    patient_email TEXT NOT NULL,
+    patient_gender TEXT,
+    visit_type TEXT NOT NULL,
+    notes TEXT,
+    fee INTEGER NOT NULL,
+    status TEXT DEFAULT 'confirmed',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    cancelled_at TIMESTAMPTZ
+  );
+
+  -- Public read/write policy (RLS off for simplicity):
+  ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY "public_all" ON appointments FOR ALL USING (true) WITH CHECK (true);
+
+  4. Run karo (▶ button)
+  5. Project Settings → API → copy karo:
+     - Project URL  → SUPABASE_URL mein paste karo
+     - anon public key → SUPABASE_ANON_KEY mein paste karo
+
+  📧 STEP 2 — EMAILJS SETUP:
+  ─────────────────────────────────────────────
+  1. https://emailjs.com → Sign up free → Email Services → Add service
+     → Gmail select karo → apna Gmail connect karo → Service ID note karo
+  2. Email Templates → Create Template:
+
+     ── Template 1: Appointment Confirmation (template_confirm) ──
+     Subject: ✅ Appointment Confirmed — {{ref_number}}
+     Body:
+       Dear {{patient_name}},
+       Your appointment has been confirmed!
+       Doctor: {{doctor_name}}
+       Specialty: {{specialty}}
+       Date: {{date}}
+       Time: {{time}}
+       Visit Type: {{visit_type}}
+       Reference No: {{ref_number}}
+       Fee: Rs. {{fee}}
+       Please arrive 10 minutes early. Bring CNIC + reports.
+
+       Need to cancel? Click here: {{cancel_link}}
+       (EmailJS editor mein "{{cancel_link}}" ko ek button/hyperlink
+       par laga dena — e.g. select text "Cancel appointment" → Insert
+       Link → URL field mein {{cancel_link}} likh dena. Patient kabhi
+       b apni email khol kr is link sy seedha cancel kr sakega.)
+
+       — MedConnect Team
+
+     ── Template 2: Cancellation (template_cancel) ──
+     Subject: ❌ Appointment Cancelled — {{ref_number}}
+     Body:
+       Dear {{patient_name}},
+       Your appointment has been cancelled.
+       Doctor: {{doctor_name}}
+       Date: {{date}} at {{time}}
+       Reference No: {{ref_number}}
+       If this was a mistake, please rebook at medconnect.com
+       — MedConnect Team
+
+     ── Template 3: Contact Form (template_contact) ──
+     Subject: 📩 New Contact Message — {{subject}}
+     Body:
+       Name: {{from_name}}
+       Email: {{from_email}}
+       Subject: {{subject}}
+       Message: {{message}}
+       Sent from MedConnect Contact Form
+
+  3. Account → General → copy karo Public Key
+  4. Neche config mein paste karo
+
+  ══════════════════════════════════════════════════════════════ -->
+
+<script>
+// ════════════════════════════════════════════════
+// 🔧 APNI VALUES YAHAN PASTE KARO
+// ════════════════════════════════════════════════
+const SUPABASE_URL  = 'https://kbifgekzcptevtyqmtbc.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtiaWZnZWt6Y3B0ZXZ0eXFtdGJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2MjExMTksImV4cCI6MjA5NzE5NzExOX0.iaHDDM7apN3bGNLr_iQ9_3hoxdyjZMTkEy3clxH4cBc';
+
+const EMAILJS_PUBLIC_KEY    = 't4rQ8xdHd8aR_Og4C';          // ← EmailJS Public Key
+const EMAILJS_SERVICE_ID    = 'service_10fhen8';             // ← EmailJS Service ID
+const EMAILJS_TPL_CONFIRM   = 'template_awccnp7';           // ← Confirmation template ID
+const EMAILJS_TPL_CANCEL    = 'template_cancel';            // ← Cancellation template ID
+const EMAILJS_TPL_CONTACT   = 'template_contact';           // ← Contact form template ID
+const EMAILJS_ADMIN_EMAIL   = 'sajidali786091@gmail.com';    // ← Admin email (contact form jaati hai yahan)
+// ════════════════════════════════════════════════
+
+// ── Init EmailJS
+emailjs.init(EMAILJS_PUBLIC_KEY);
+
+// ── Init Supabase
+const _supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+// ── DB: Appointment save karo
+window.saveAppointmentToDB = async function(data) {
+  try {
+    const { data: row, error } = await _supa.from('appointments').insert([{
+      ref_number:     data.refNumber,
+      doctor_id:      data.doctorId,
+      doctor_name:    data.doctorName,
+      specialty:      data.specialty,
+      date:           data.date,
+      time:           data.time,
+      patient_name:   data.patientName,
+      patient_age:    data.patientAge,
+      patient_phone:  data.patientPhone,
+      patient_email:  data.patientEmail,
+      patient_gender: data.patientGender,
+      visit_type:     data.visitType,
+      notes:          data.notes || '',
+      fee:            data.fee,
+      status:         'confirmed'
+    }]).select().single();
+    if (error) throw error;
+    console.log('✅ Appointment saved to Supabase:', row.id);
+    return row.id;
+  } catch(e) {
+    console.error('❌ Supabase save error:', e.message);
+    return null;
+  }
+};
+
+// ── DB: Doctor ke booked slots load karo
+// Note: guzra hua slot (jiska date+time nikal chuka hai) automatically free
+// ho jata hai — koi data delete nahi hota, bas purani booking ko "available"
+// treat kiya jata hai jab us ka waqt guzar jaye.
+function parseSlotDateTime(dateStr, timeStr) {
+  // dateStr: 'YYYY-MM-DD', timeStr: 'hh:mm AM/PM'
+  const [y, m, d] = dateStr.split('-').map(Number);
+  const match = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(timeStr.trim());
+  if (!match) return new Date(y, (m||1)-1, d||1); // fallback: treat as start of day
+  let [, hh, mm, ap] = match;
+  hh = parseInt(hh, 10);
+  mm = parseInt(mm, 10);
+  if (ap.toUpperCase() === 'PM' && hh !== 12) hh += 12;
+  if (ap.toUpperCase() === 'AM' && hh === 12) hh = 0;
+  return new Date(y, (m||1)-1, d||1, hh, mm, 0);
+}
+
+window.loadBookedSlotsFromDB = async function(doctorId) {
+  try {
+    const todayStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const { data, error } = await _supa
+      .from('appointments')
+      .select('date, time, doctor_id')
+      .eq('doctor_id', doctorId)
+      .eq('status', 'confirmed')
+      .gte('date', todayStr); // purani dates DB query mein hi exclude — bade lists ke liye fast
+    if (error) throw error;
+    const now = new Date();
+    const slots = {};
+    (data || []).forEach(r => {
+      const slotMoment = parseSlotDateTime(r.date, r.time);
+      if (slotMoment.getTime() <= now.getTime()) return; // waqt guzar gaya — free treat karo
+      slots[`${r.date}|${r.time}|${r.doctor_id}`] = true;
+    });
+    return slots;
+  } catch(e) {
+    console.error('❌ Slots load error:', e.message);
+    return {};
+  }
+};
+
+// ── DB: Appointment cancel karo
+window.cancelAppointmentInDB = async function(supabaseId) {
+  try {
+    const { error } = await _supa
+      .from('appointments')
+      .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
+      .eq('id', supabaseId);
+    if (error) throw error;
+    console.log('✅ Appointment cancelled in Supabase');
+    return true;
+  } catch(e) {
+    console.error('❌ Cancel error:', e.message);
+    return false;
+  }
+};
+
+// ── DB: Appointment dhoondo reference number sy (email cancel link ke liye)
+window.getAppointmentByRef = async function(refNumber) {
+  try {
+    const { data, error } = await _supa
+      .from('appointments')
+      .select('*')
+      .eq('ref_number', refNumber)
+      .single();
+    if (error) throw error;
+    return data;
+  } catch(e) {
+    console.error('❌ Lookup error:', e.message);
+    return null;
+  }
+};
+
+// ── EMAIL: Confirmation email bhejo
+window.sendConfirmationEmail = async function(params) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TPL_CONFIRM, {
+      to_email:    params.email,
+      patient_name: params.name,
+      doctor_name:  params.doctorName,
+      specialty:    params.specialty,
+      date:         params.date,
+      time:         params.time,
+      visit_type:   params.visitType,
+      ref_number:   params.ref,
+      fee:          params.fee,
+      cancel_link:  params.cancelLink
+    });
+    console.log('✅ Confirmation email sent');
+    return true;
+  } catch(e) {
+    console.error('❌ Email send error:', e);
+    return false;
+  }
+};
+
+// ── EMAIL: Cancellation email bhejo
+window.sendCancellationEmail = async function(params) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TPL_CANCEL, {
+      to_email:     params.email,
+      patient_name: params.name,
+      doctor_name:  params.doctorName,
+      date:         params.date,
+      time:         params.time,
+      ref_number:   params.ref,
+      cancel_link:  'https://medconnect6.vercel.app/?cancel=' + params.ref
+    });
+    console.log('✅ Cancellation email sent');
+    return true;
+  } catch(e) {
+    console.error('❌ Cancel email error:', e);
+    return false;
+  }
+};
+
+// ── EMAIL: Contact form email bhejo
+window.sendContactEmail = async function(params) {
+  try {
+    await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TPL_CONTACT, {
+      to_email:   EMAILJS_ADMIN_EMAIL,
+      from_name:  params.name,
+      from_email: params.email,
+      subject:    params.subject,
+      message:    params.message
+    });
+    console.log('✅ Contact email sent');
+    return true;
+  } catch(e) {
+    console.error('❌ Contact email error:', e);
+    return false;
+  }
+};
+
+console.log('🚀 MedConnect Backend Ready (Supabase + EmailJS)');
+window.backendReady = true;
+</script>
+<style>
+:root {
+  --blue: #1A6FDB;
+  --blue-dark: #0D52A8;
+  --blue-light: #EBF3FF;
+  --blue-mid: #4A90E2;
+  --teal: #0FA87E;
+  --teal-light: #E6F7F2;
+  --amber: #F59E0B;
+  --amber-light: #FEF3C7;
+  --red: #E53935;
+  --red-light: #FFEBEE;
+  --bg: #F7FAFD;
+  --white: #FFFFFF;
+  --text: #111827;
+  --text-mid: #374151;
+  --text-muted: #6B7280;
+  --text-hint: #9CA3AF;
+  --border: #E5E9F0;
+  --border-mid: #CBD5E1;
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow: 0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 12px 40px rgba(0,0,0,0.12), 0 4px 12px rgba(0,0,0,0.06);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; }
+
+/* ── NAV ── */
+nav {
+  background: var(--white);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 100;
+  box-shadow: var(--shadow-sm);
+}
+.nav-inner {
+  max-width: 1140px; margin: 0 auto;
+  padding: 0 24px;
+  display: flex; align-items: center; justify-content: space-between;
+  height: 64px;
+}
+.logo { display: flex; align-items: center; gap: 10px; text-decoration: none; }
+.logo-icon {
+  width: 36px; height: 36px; background: var(--blue);
+  border-radius: 10px; display: flex; align-items: center; justify-content: center;
+}
+.logo-icon svg { width: 20px; height: 20px; fill: white; }
+.logo-text { font-size: 18px; font-weight: 700; color: var(--text); letter-spacing: -0.3px; }
+.logo-text span { color: var(--blue); }
+.nav-links { display: flex; align-items: center; gap: 6px; }
+.nav-links a {
+  padding: 8px 14px; border-radius: var(--radius-sm);
+  text-decoration: none; font-size: 14px; font-weight: 500;
+  color: var(--text-mid); transition: all 0.15s;
+}
+.nav-links a:hover { background: var(--blue-light); color: var(--blue); }
+.nav-links a.active { color: var(--blue); background: var(--blue-light); }
+.nav-cta {
+  background: var(--blue); color: white !important;
+  padding: 8px 18px !important; border-radius: var(--radius-sm);
+  transition: background 0.15s !important;
+}
+.nav-cta:hover { background: var(--blue-dark) !important; color: white !important; }
+.nav-hamburger { display: none; background: none; border: none; cursor: pointer; padding: 4px; }
+.nav-hamburger span { display: block; width: 22px; height: 2px; background: var(--text); margin: 4px 0; border-radius: 2px; transition: all 0.2s; }
+
+/* ── PAGES ── */
+.page { display: none; }
+.page.active { display: block; }
+
+/* ── HOME ── */
+.hero {
+  background: linear-gradient(135deg, #0D52A8 0%, #1A6FDB 50%, #3B8FEF 100%);
+  padding: 80px 24px 100px;
+  position: relative; overflow: hidden;
+}
+.hero::before {
+  content: '';
+  position: absolute; top: -60px; right: -60px;
+  width: 400px; height: 400px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 50%;
+}
+.hero::after {
+  content: '';
+  position: absolute; bottom: -80px; left: -40px;
+  width: 300px; height: 300px;
+  background: rgba(255,255,255,0.03);
+  border-radius: 50%;
+}
+.hero-inner { max-width: 1140px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: center; position: relative; z-index: 1; }
+.hero-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.15); color: white;
+  padding: 6px 14px; border-radius: 20px;
+  font-size: 13px; font-weight: 500; margin-bottom: 20px;
+  border: 1px solid rgba(255,255,255,0.2);
+}
+.hero h1 {
+  font-family: 'Playfair Display', serif;
+  font-size: 52px; font-weight: 700; color: white;
+  line-height: 1.15; margin-bottom: 20px; letter-spacing: -0.5px;
+}
+.hero h1 em { font-style: italic; color: #93C5FD; }
+.hero p { font-size: 17px; color: rgba(255,255,255,0.85); margin-bottom: 36px; line-height: 1.7; }
+.hero-btns { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn-white {
+  background: white; color: var(--blue);
+  padding: 13px 28px; border-radius: var(--radius-sm);
+  font-size: 15px; font-weight: 600; text-decoration: none;
+  border: none; cursor: pointer; transition: all 0.2s;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn-white:hover { background: #f0f4ff; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(0,0,0,0.15); }
+.btn-outline-white {
+  background: transparent; color: white;
+  padding: 13px 28px; border-radius: var(--radius-sm);
+  font-size: 15px; font-weight: 600; text-decoration: none;
+  border: 1.5px solid rgba(255,255,255,0.5); cursor: pointer; transition: all 0.2s;
+}
+.btn-outline-white:hover { background: rgba(255,255,255,0.1); border-color: white; }
+.hero-card {
+  background: white; border-radius: var(--radius-xl);
+  padding: 28px; box-shadow: var(--shadow-lg);
+}
+.hero-card-title { font-size: 14px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 20px; }
+.quick-doc { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: var(--radius); border: 1px solid var(--border); margin-bottom: 10px; cursor: pointer; transition: all 0.15s; }
+.quick-doc:hover { border-color: var(--blue); background: var(--blue-light); }
+.quick-doc-av { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px; flex-shrink: 0; }
+.quick-doc-info { flex: 1; }
+.quick-doc-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.quick-doc-spec { font-size: 12px; color: var(--text-muted); }
+.quick-doc-fee { font-size: 13px; font-weight: 600; color: var(--blue); }
+
+.stats-band { background: white; border-bottom: 1px solid var(--border); }
+.stats-inner { max-width: 1140px; margin: 0 auto; padding: 36px 24px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; }
+.stat-item { text-align: center; padding: 0 24px; border-right: 1px solid var(--border); }
+.stat-item:last-child { border-right: none; }
+.stat-num { font-size: 32px; font-weight: 700; color: var(--blue); letter-spacing: -1px; }
+.stat-label { font-size: 13px; color: var(--text-muted); font-weight: 500; margin-top: 4px; }
+
+.section { padding: 80px 24px; }
+.section-inner { max-width: 1140px; margin: 0 auto; }
+.section-header { text-align: center; margin-bottom: 56px; }
+.eyebrow { font-size: 12px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; }
+.section-header h2 { font-family: 'Playfair Display', serif; font-size: 40px; font-weight: 700; color: var(--text); margin-bottom: 14px; line-height: 1.2; }
+.section-header p { font-size: 16px; color: var(--text-muted); max-width: 540px; margin: 0 auto; line-height: 1.7; }
+
+/* SPECIALTIES */
+.spec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+.spec-card {
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); padding: 24px 16px;
+  text-align: center; cursor: pointer; transition: all 0.2s;
+  text-decoration: none;
+}
+.spec-card:hover { border-color: var(--blue); box-shadow: var(--shadow); transform: translateY(-2px); }
+.spec-icon { width: 52px; height: 52px; border-radius: 14px; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px; font-size: 22px; }
+.spec-name { font-size: 13px; font-weight: 600; color: var(--text); }
+.spec-count { font-size: 11px; color: var(--text-muted); margin-top: 3px; }
+
+/* HOW IT WORKS */
+.how-bg { background: var(--blue-light); }
+.steps-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; position: relative; }
+.steps-flow::before {
+  content: '';
+  position: absolute; top: 36px; left: 12.5%; right: 12.5%;
+  height: 2px; background: var(--border-mid);
+  z-index: 0;
+}
+.how-step { text-align: center; padding: 0 20px; position: relative; z-index: 1; }
+.how-num {
+  width: 72px; height: 72px; border-radius: 50%;
+  background: var(--blue); color: white;
+  font-size: 22px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 20px; box-shadow: 0 4px 16px rgba(26,111,219,0.3);
+}
+.how-step h3 { font-size: 16px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.how-step p { font-size: 14px; color: var(--text-muted); line-height: 1.6; }
+
+/* DOCTORS */
+.doctors-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+.doctor-card {
+  background: white; border: 1px solid var(--border);
+  border-radius: var(--radius-lg); overflow: hidden;
+  transition: all 0.2s; cursor: pointer;
+}
+.doctor-card:hover { box-shadow: var(--shadow-lg); transform: translateY(-3px); border-color: var(--blue); }
+.doctor-card-top { padding: 24px 24px 16px; }
+.doc-header { display: flex; align-items: center; gap: 14px; margin-bottom: 16px; }
+.doc-av { width: 56px; height: 56px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px; flex-shrink: 0; }
+.doc-title { font-size: 16px; font-weight: 700; color: var(--text); }
+.doc-spec-tag {
+  display: inline-block; font-size: 11px; font-weight: 600;
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--blue-light); color: var(--blue); margin-top: 3px;
+}
+.doc-rating { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 600; color: var(--amber); }
+.doc-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12px; color: var(--text-muted); }
+.doc-meta-item { display: flex; align-items: center; gap: 5px; }
+.doctor-card-bottom {
+  padding: 14px 24px; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  background: #FAFBFC;
+}
+.doc-fee-label { font-size: 11px; color: var(--text-muted); }
+.doc-fee-val { font-size: 16px; font-weight: 700; color: var(--text); }
+.btn-book-doc {
+  background: var(--blue); color: white;
+  border: none; border-radius: var(--radius-sm);
+  padding: 8px 16px; font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background 0.15s; font-family: 'Inter', sans-serif;
+}
+.btn-book-doc:hover { background: var(--blue-dark); }
+
+/* TESTIMONIALS */
+.reviews-bg { background: #F0F6FF; }
+.reviews-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.review-card {
+  background: white; border-radius: var(--radius-lg);
+  padding: 28px; border: 1px solid var(--border);
+}
+.review-stars { color: var(--amber); font-size: 16px; margin-bottom: 14px; }
+.review-text { font-size: 15px; color: var(--text-mid); line-height: 1.7; margin-bottom: 20px; font-style: italic; }
+.review-author { display: flex; align-items: center; gap: 10px; }
+.review-av { width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.review-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.review-loc { font-size: 12px; color: var(--text-muted); }
+
+/* CTA BAND */
+.cta-band {
+  background: linear-gradient(135deg, #0D52A8, #1A6FDB);
+  padding: 80px 24px; text-align: center;
+}
+.cta-band h2 { font-family: 'Playfair Display', serif; font-size: 40px; font-weight: 700; color: white; margin-bottom: 14px; }
+.cta-band p { font-size: 17px; color: rgba(255,255,255,0.85); margin-bottom: 36px; }
+
+/* FOOTER */
+footer { background: #111827; color: white; padding: 60px 24px 30px; }
+.footer-inner { max-width: 1140px; margin: 0 auto; }
+.footer-top { display: grid; grid-template-columns: 2fr 1fr 1fr 1.5fr; gap: 40px; margin-bottom: 48px; }
+.footer-brand p { font-size: 14px; color: #9CA3AF; line-height: 1.7; margin-top: 14px; margin-bottom: 20px; }
+.footer-social { display: flex; gap: 10px; }
+.social-btn {
+  width: 36px; height: 36px; border-radius: 8px;
+  background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.15s; color: white; font-size: 14px;
+  text-decoration: none;
+}
+.social-btn:hover { background: var(--blue); border-color: var(--blue); }
+.footer-col h4 { font-size: 13px; font-weight: 700; color: white; text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 16px; }
+.footer-col a { display: block; font-size: 14px; color: #9CA3AF; text-decoration: none; margin-bottom: 10px; transition: color 0.15s; word-break: break-all; white-space: normal; }
+.footer-col a:hover { color: white; }
+.footer-bottom { border-top: 1px solid rgba(255,255,255,0.08); padding-top: 24px; display: flex; justify-content: space-between; align-items: center; }
+.footer-bottom p { font-size: 13px; color: #6B7280; }
+
+/* ── BOOKING PAGE ── */
+.booking-page-wrap { max-width: 980px; margin: 0 auto; padding: 40px 24px 80px; }
+.booking-header { margin-bottom: 36px; }
+.booking-header h1 { font-family: 'Playfair Display', serif; font-size: 34px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.booking-header p { font-size: 15px; color: var(--text-muted); }
+.progress-bar { display: flex; gap: 0; margin-bottom: 40px; }
+.prog-step { flex: 1; position: relative; }
+.prog-step::after { content: ''; position: absolute; top: 18px; left: 50%; width: 100%; height: 2px; background: var(--border); z-index: 0; }
+.prog-step:last-child::after { display: none; }
+.prog-step.done::after { background: var(--teal); }
+.prog-step.active::after { background: var(--border); }
+.prog-inner { display: flex; flex-direction: column; align-items: center; gap: 8px; position: relative; z-index: 1; }
+.prog-circle {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg); border: 2px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 13px; font-weight: 700; color: var(--text-muted);
+  transition: all 0.2s;
+}
+.prog-step.active .prog-circle { background: var(--blue); border-color: var(--blue); color: white; }
+.prog-step.done .prog-circle { background: var(--teal); border-color: var(--teal); color: white; }
+.prog-label { font-size: 12px; font-weight: 500; color: var(--text-muted); text-align: center; white-space: nowrap; }
+.prog-step.active .prog-label { color: var(--blue); font-weight: 700; }
+.prog-step.done .prog-label { color: var(--teal); }
+
+.booking-layout { display: grid; grid-template-columns: 1fr 320px; gap: 24px; align-items: start; }
+.booking-main { display: flex; flex-direction: column; gap: 0; }
+
+.bcard { background: white; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 28px; margin-bottom: 0; }
+.bcard-title { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.bcard-sub { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; }
+.bstep { display: none; }
+.bstep.active { display: block; }
+
+/* doc grid in booking */
+.bdoc-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.bdoc-item {
+  border: 1.5px solid var(--border); border-radius: var(--radius);
+  padding: 16px; cursor: pointer; transition: all 0.15s;
+}
+.bdoc-item:hover { border-color: var(--blue); background: var(--blue-light); }
+.bdoc-item.selected { border-color: var(--blue); background: var(--blue-light); }
+.bdoc-item-top { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.bdoc-av { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex-shrink: 0; }
+.bdoc-name { font-size: 14px; font-weight: 700; color: var(--text); }
+.bdoc-spec { font-size: 12px; color: var(--text-muted); }
+.bdoc-item-bottom { display: flex; align-items: center; justify-content: space-between; }
+.bdoc-fee { font-size: 14px; font-weight: 700; color: var(--blue); }
+.bdoc-stars { font-size: 12px; color: var(--amber); }
+.selected-check {
+  width: 20px; height: 20px; border-radius: 50%; background: var(--blue);
+  display: none; align-items: center; justify-content: center; margin-left: auto;
+}
+.bdoc-item.selected .selected-check { display: flex; }
+
+/* calendar */
+.cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.cal-nav-btn {
+  width: 34px; height: 34px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: white; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; font-size: 16px;
+  transition: all 0.15s; color: var(--text);
+}
+.cal-nav-btn:hover { background: var(--blue-light); border-color: var(--blue); color: var(--blue); }
+.cal-month { font-size: 16px; font-weight: 700; color: var(--text); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-day-hdr { text-align: center; font-size: 11px; font-weight: 700; color: var(--text-muted); padding: 8px 0; text-transform: uppercase; letter-spacing: 0.5px; }
+.cal-day {
+  aspect-ratio: 1; border-radius: var(--radius-sm);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; font-weight: 500; cursor: pointer;
+  transition: all 0.15s; border: 1.5px solid transparent;
+}
+.cal-day:hover:not(.disabled):not(.empty) { background: var(--blue-light); border-color: var(--blue); color: var(--blue); }
+.cal-day.selected { background: var(--blue); color: white; border-color: var(--blue); font-weight: 700; }
+.cal-day.today { font-weight: 700; color: var(--blue); }
+.cal-day.disabled { color: var(--text-hint); cursor: default; opacity: 0.4; }
+.cal-day.empty { cursor: default; }
+.time-section { margin-top: 28px; }
+.time-section-title { font-size: 14px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 12px; }
+.time-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.time-chip {
+  padding: 9px 6px; border-radius: var(--radius-sm);
+  border: 1.5px solid var(--border); text-align: center;
+  font-size: 13px; font-weight: 500; cursor: pointer; transition: all 0.15s;
+  color: var(--text);
+}
+.time-chip:hover:not(.taken) { border-color: var(--blue); background: var(--blue-light); color: var(--blue); }
+.time-chip.selected { background: var(--blue); color: white; border-color: var(--blue); }
+.time-chip.taken { background: var(--bg); color: var(--text-hint); cursor: default; text-decoration: line-through; position: relative; }
+.time-chip.taken span { text-decoration: none; color: var(--red); margin-left: 2px; font-weight: 900; }
+.time-chip.booked-by-me {
+  background: var(--teal-light); color: var(--teal);
+  border-color: var(--teal); cursor: default;
+  font-weight: 700; position: relative;
+}
+.time-chip.booked-by-me::after {
+  content: ' ✓'; font-weight: 900;
+}
+.btn-cancel {
+  background: var(--red-light); color: var(--red);
+  border: 1.5px solid var(--red); border-radius: var(--radius-sm);
+  padding: 12px 28px; font-size: 14px; font-weight: 600;
+  cursor: pointer; transition: all 0.2s; font-family: 'Inter', sans-serif;
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.btn-cancel:hover { background: var(--red); color: white; }
+.cancel-confirm-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 500; opacity: 0; pointer-events: none; transition: opacity 0.2s;
+}
+.cancel-confirm-overlay.show { opacity: 1; pointer-events: all; }
+.cancel-confirm-box {
+  background: white; border-radius: var(--radius-xl);
+  padding: 36px; max-width: 420px; width: 90%;
+  box-shadow: var(--shadow-lg); text-align: center;
+}
+.cancel-confirm-box h3 { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 10px; }
+.cancel-confirm-box p { font-size: 15px; color: var(--text-muted); margin-bottom: 28px; line-height: 1.6; }
+.cancel-confirm-actions { display: flex; gap: 12px; justify-content: center; }
+.booked-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--teal-light); color: var(--teal);
+  border: 1px solid var(--teal); border-radius: 20px;
+  padding: 4px 12px; font-size: 12px; font-weight: 700;
+  margin-left: 8px; vertical-align: middle;
+}
+
+/* form */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-field { display: flex; flex-direction: column; gap: 6px; }
+.form-field.full { grid-column: 1 / -1; }
+.form-field label { font-size: 13px; font-weight: 600; color: var(--text-mid); }
+.form-field input, .form-field select, .form-field textarea {
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 14px; font-family: 'Inter', sans-serif;
+  color: var(--text); background: white;
+  transition: border-color 0.15s;
+  outline: none;
+}
+.form-field input:focus, .form-field select:focus, .form-field textarea:focus { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(26,111,219,0.08); }
+.form-field textarea { min-height: 90px; resize: vertical; }
+
+/* summary sidebar */
+.booking-sidebar { position: sticky; top: 88px; }
+.summary-box { background: white; border: 1px solid var(--border); border-radius: var(--radius-lg); overflow: hidden; }
+.summary-box-head { background: var(--blue); padding: 20px; }
+.summary-box-head h3 { font-size: 16px; font-weight: 700; color: white; margin-bottom: 2px; }
+.summary-box-head p { font-size: 13px; color: rgba(255,255,255,0.8); }
+.summary-body { padding: 20px; }
+.summ-row { display: flex; align-items: flex-start; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid var(--border); gap: 12px; }
+.summ-row:last-child { border-bottom: none; }
+.summ-key { font-size: 12px; color: var(--text-muted); font-weight: 500; }
+.summ-val { font-size: 13px; font-weight: 700; color: var(--text); text-align: right; }
+.summ-placeholder { color: var(--text-hint); font-style: italic; font-weight: 400; }
+
+/* nav buttons */
+.bstep-nav { display: flex; justify-content: space-between; align-items: center; margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+.btn-back {
+  background: white; color: var(--text-mid); border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm); padding: 11px 22px;
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  font-family: 'Inter', sans-serif; display: flex; align-items: center; gap: 6px;
+}
+.btn-back:hover { background: var(--bg); border-color: var(--border-mid); }
+.btn-next {
+  background: var(--blue); color: white; border: none;
+  border-radius: var(--radius-sm); padding: 11px 28px;
+  font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.15s;
+  font-family: 'Inter', sans-serif; display: flex; align-items: center; gap: 6px;
+}
+.btn-next:hover:not(:disabled) { background: var(--blue-dark); }
+.btn-next:disabled { opacity: 0.45; cursor: default; }
+.btn-confirm {
+  background: var(--teal); color: white; border: none;
+  border-radius: var(--radius-sm); padding: 13px 32px;
+  font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.15s;
+  font-family: 'Inter', sans-serif; width: 100%; margin-top: 16px;
+}
+.btn-confirm:hover { background: #0d9068; }
+
+/* confirm step */
+.confirm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.confirm-section { padding: 16px 0; border-bottom: 1px solid var(--border); }
+.confirm-section:last-child { border-bottom: none; }
+.confirm-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; font-weight: 700; color: var(--text-muted); margin-bottom: 4px; }
+.confirm-val { font-size: 15px; font-weight: 600; color: var(--text); }
+.confirm-full { grid-column: 1 / -1; }
+.notice-box { background: var(--amber-light); border: 1px solid #FDE68A; border-radius: var(--radius-sm); padding: 14px 16px; font-size: 13px; color: #92400E; margin-top: 20px; display: flex; gap: 10px; align-items: flex-start; line-height: 1.5; }
+
+/* success */
+.success-wrap { max-width: 600px; margin: 0 auto; padding: 60px 24px; text-align: center; }
+.success-circle {
+  width: 96px; height: 96px; border-radius: 50%;
+  background: var(--teal-light); margin: 0 auto 28px;
+  display: flex; align-items: center; justify-content: center;
+}
+.success-circle svg { width: 48px; height: 48px; }
+.success-wrap h1 { font-family: 'Playfair Display', serif; font-size: 34px; font-weight: 700; color: var(--text); margin-bottom: 12px; }
+.success-wrap p { font-size: 16px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.7; }
+.ref-box {
+  background: var(--blue-light); border: 1.5px solid var(--blue);
+  border-radius: var(--radius); padding: 16px 24px; margin: 28px auto;
+  max-width: 360px;
+}
+.ref-box p { font-size: 12px; font-weight: 700; color: var(--blue); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.ref-box span { font-size: 24px; font-weight: 700; color: var(--blue-dark); letter-spacing: 3px; }
+.success-summary { background: white; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 24px; margin: 28px 0; text-align: left; }
+.success-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+
+/* ── DOCTORS PAGE ── */
+.page-hero { background: linear-gradient(135deg, #0D52A8, #1A6FDB); padding: 56px 24px; text-align: center; }
+.page-hero h1 { font-family: 'Playfair Display', serif; font-size: 42px; font-weight: 700; color: white; margin-bottom: 10px; }
+.page-hero p { font-size: 16px; color: rgba(255,255,255,0.85); max-width: 560px; margin: 0 auto; }
+.filter-bar { background: white; border-bottom: 1px solid var(--border); padding: 16px 24px; }
+.filter-inner { max-width: 1140px; margin: 0 auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.filter-inner input {
+  flex: 1; min-width: 200px; padding: 9px 14px;
+  border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 14px; font-family: 'Inter', sans-serif; outline: none; color: var(--text);
+}
+.filter-inner input:focus { border-color: var(--blue); }
+.filter-inner select {
+  padding: 9px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm);
+  font-size: 14px; font-family: 'Inter', sans-serif; outline: none; color: var(--text); background: white; cursor: pointer;
+}
+.filter-inner select:focus { border-color: var(--blue); }
+.all-doctors-grid { max-width: 1140px; margin: 40px auto; padding: 0 24px 80px; display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+
+/* ── CONTACT PAGE ── */
+.contact-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; max-width: 900px; margin: 0 auto; }
+.contact-info h2 { font-family: 'Playfair Display', serif; font-size: 32px; font-weight: 700; color: var(--text); margin-bottom: 14px; }
+.contact-info p { font-size: 15px; color: var(--text-muted); line-height: 1.7; margin-bottom: 28px; }
+.contact-item { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 20px; }
+.contact-icon { width: 44px; height: 44px; border-radius: 12px; background: var(--blue-light); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.contact-icon svg { width: 20px; height: 20px; stroke: var(--blue); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.contact-item-title { font-size: 13px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+.contact-item-val { font-size: 15px; font-weight: 600; color: var(--text); word-break: break-all; }
+.contact-form-box { background: white; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 32px; box-shadow: var(--shadow); }
+.contact-form-box h3 { font-size: 20px; font-weight: 700; color: var(--text); margin-bottom: 6px; }
+.contact-form-box p { font-size: 14px; color: var(--text-muted); margin-bottom: 24px; }
+.btn-send {
+  width: 100%; background: var(--blue); color: white; border: none;
+  border-radius: var(--radius-sm); padding: 13px;
+  font-size: 15px; font-weight: 600; cursor: pointer;
+  font-family: 'Inter', sans-serif; transition: background 0.15s; margin-top: 4px;
+}
+.btn-send:hover { background: var(--blue-dark); }
+
+/* ── MOBILE ── */
+@media (max-width: 768px) {
+  .hero-inner { grid-template-columns: 1fr; gap: 32px; }
+  .hero-card { display: none; }
+  .hero h1 { font-size: 36px; }
+  .stats-inner { grid-template-columns: repeat(2, 1fr); }
+  .stat-item { border-right: none; border-bottom: 1px solid var(--border); padding: 16px 0; }
+  .stat-item:nth-child(2n) { border-right: none; }
+  .steps-flow { grid-template-columns: 1fr; }
+  .steps-flow::before { display: none; }
+  .reviews-grid { grid-template-columns: 1fr; }
+  .footer-top { grid-template-columns: 1fr; }
+  .booking-layout { grid-template-columns: 1fr; }
+  .booking-sidebar { position: static; }
+  .bdoc-grid { grid-template-columns: 1fr; }
+  .time-grid { grid-template-columns: repeat(3, 1fr); }
+  .form-grid { grid-template-columns: 1fr; }
+  .confirm-grid { grid-template-columns: 1fr; }
+  .contact-grid { grid-template-columns: 1fr; }
+  .nav-links { display: none; }
+  .nav-hamburger { display: block; }
+  .spec-grid { grid-template-columns: repeat(3, 1fr); }
+}
+
+/* TOAST */
+.toast {
+  position: fixed; bottom: 24px; right: 24px;
+  background: #1A1A2E; color: white;
+  padding: 14px 20px; border-radius: var(--radius);
+  font-size: 14px; font-weight: 500;
+  box-shadow: var(--shadow-lg);
+  transform: translateY(80px); opacity: 0;
+  transition: all 0.3s; z-index: 999;
+  display: flex; align-items: center; gap: 10px;
+}
+.toast.show { transform: translateY(0); opacity: 1; }
+.toast.success { border-left: 4px solid var(--teal); }
+.toast.error { border-left: 4px solid var(--red); }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-inner">
+    <a class="logo" href="#" onclick="showPage('home')">
+      <div class="logo-icon">
+        <svg viewBox="0 0 24 24"><path d="M12 2C9 2 7 4 7 7c0 2 1 3.5 2.5 4.5C7 13 5 15.5 5 18h14c0-2.5-2-5-4.5-6.5C16 10.5 17 9 17 7c0-3-2-5-5-5z"/><rect x="10" y="1" width="4" height="3" rx="1"/></svg>
+      </div>
+      <span class="logo-text">Med<span>Connect</span></span>
+    </a>
+    <div class="nav-links">
+      <a href="#" onclick="showPage('home')" id="nav-home" class="active">Home</a>
+      <a href="#" onclick="showPage('doctors')" id="nav-doctors">Find Doctors</a>
+      <a href="#" onclick="showPage('contact')" id="nav-contact">Contact</a>
+      <a href="#" onclick="showPage('booking')" class="nav-cta" id="nav-booking">Book Appointment</a>
+    </div>
+    <button class="nav-hamburger" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- ══════════════════════════════════════════ HOME PAGE -->
+<div id="page-home" class="page active">
+
+  <section class="hero">
+    <div class="hero-inner">
+      <div>
+        <div class="hero-badge">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4" stroke="#1A6FDB" stroke-width="2" fill="none" stroke-linecap="round"/></svg>
+          Trusted by 50,000+ patients
+        </div>
+        <h1>Quality <em>healthcare</em> starts with the right doctor</h1>
+        <p>Book appointments with top-rated specialists online — no waiting rooms, no phone calls. Get the care you deserve, on your schedule.</p>
+        <div class="hero-btns">
+          <button class="btn-white" onclick="showPage('booking')">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Book Appointment
+          </button>
+          <button class="btn-outline-white" onclick="showPage('doctors')">Browse Doctors</button>
+        </div>
+      </div>
+      <div class="hero-card">
+        <p class="hero-card-title">Available today</p>
+        <div id="hero-docs"></div>
+        <button onclick="showPage('doctors')" style="width:100%;background:var(--blue);color:white;border:none;border-radius:var(--radius-sm);padding:11px;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px;font-family:'Inter',sans-serif;">View all doctors →</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="stats-band">
+    <div class="stats-inner">
+      <div class="stat-item"><div class="stat-num">200+</div><div class="stat-label">Specialist doctors</div></div>
+      <div class="stat-item"><div class="stat-num">50K+</div><div class="stat-label">Patients served</div></div>
+      <div class="stat-item"><div class="stat-num">30+</div><div class="stat-label">Specializations</div></div>
+      <div class="stat-item"><div class="stat-num">4.9★</div><div class="stat-label">Average rating</div></div>
+    </div>
+  </div>
+
+  <section class="section">
+    <div class="section-inner">
+      <div class="section-header">
+        <p class="eyebrow">Browse by specialty</p>
+        <h2>Find the right specialist</h2>
+        <p>From routine check-ups to complex conditions, our network covers every area of medicine.</p>
+      </div>
+      <div class="spec-grid">
+        <a class="spec-card" href="#" onclick="filterAndShow('Cardiologist')"><div class="spec-icon" style="background:#FEE2E2">❤️</div><div class="spec-name">Cardiology</div><div class="spec-count">12 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Dermatologist')"><div class="spec-icon" style="background:#FEF3C7">✨</div><div class="spec-name">Dermatology</div><div class="spec-count">9 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Pediatrician')"><div class="spec-icon" style="background:#DBEAFE">👶</div><div class="spec-name">Pediatrics</div><div class="spec-count">14 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Orthopedic')"><div class="spec-icon" style="background:#D1FAE5">🦴</div><div class="spec-name">Orthopedics</div><div class="spec-count">8 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Neurologist')"><div class="spec-icon" style="background:#EDE9FE">🧠</div><div class="spec-name">Neurology</div><div class="spec-count">7 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('General Physician')"><div class="spec-icon" style="background:#E0F2FE">🩺</div><div class="spec-name">General Medicine</div><div class="spec-count">22 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Psychiatrist')"><div class="spec-icon" style="background:#FDF2F8">🧘</div><div class="spec-name">Psychiatry</div><div class="spec-count">6 doctors</div></a>
+        <a class="spec-card" href="#" onclick="filterAndShow('Dentist')"><div class="spec-icon" style="background:#F0FDF4">🦷</div><div class="spec-name">Dentistry</div><div class="spec-count">11 doctors</div></a>
+      </div>
+    </div>
+  </section>
+
+  <section class="section how-bg">
+    <div class="section-inner">
+      <div class="section-header">
+        <p class="eyebrow">Simple process</p>
+        <h2>Book in four easy steps</h2>
+        <p>Getting an appointment takes less than two minutes. No paperwork required.</p>
+      </div>
+      <div class="steps-flow">
+        <div class="how-step"><div class="how-num">1</div><h3>Choose a doctor</h3><p>Browse by specialty or search by name to find your ideal physician.</p></div>
+        <div class="how-step"><div class="how-num">2</div><h3>Pick date & time</h3><p>Select a convenient slot from the doctor's live availability calendar.</p></div>
+        <div class="how-step"><div class="how-num">3</div><h3>Fill your details</h3><p>Enter your contact info and describe your symptoms briefly.</p></div>
+        <div class="how-step"><div class="how-num">4</div><h3>Get confirmed</h3><p>Receive an instant confirmation with your appointment reference number.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-inner">
+      <div class="section-header">
+        <p class="eyebrow">Our team</p>
+        <h2>Featured doctors</h2>
+        <p>Board-certified specialists with years of experience and thousands of satisfied patients.</p>
+      </div>
+      <div class="doctors-grid" id="home-doctors"></div>
+      <div style="text-align:center;margin-top:40px">
+        <button onclick="showPage('doctors')" style="background:white;color:var(--blue);border:2px solid var(--blue);padding:13px 36px;border-radius:var(--radius-sm);font-size:15px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;transition:all 0.15s" onmouseover="this.style.background='var(--blue)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--blue)'">View all doctors →</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="section reviews-bg">
+    <div class="section-inner">
+      <div class="section-header">
+        <p class="eyebrow">Patient stories</p>
+        <h2>What our patients say</h2>
+      </div>
+      <div class="reviews-grid">
+        <div class="review-card"><div class="review-stars">★★★★★</div><p class="review-text">"Booking was effortless — I found a cardiologist, picked a slot, and got confirmed in under 3 minutes. The doctor was wonderful and thorough."</p><div class="review-author"><div class="review-av" style="background:#DBEAFE;color:#1D4ED8">FA</div><div><div class="review-name">Fatima Ashraf</div><div class="review-loc">Lahore</div></div></div></div>
+        <div class="review-card"><div class="review-stars">★★★★★</div><p class="review-text">"I was nervous about my child's appointment but the pediatrician Dr. Sara Malik was incredibly patient and kind. Will definitely use MedConnect again."</p><div class="review-author"><div class="review-av" style="background:#D1FAE5;color:#065F46">ZK</div><div><div class="review-name">Zainab Khan</div><div class="review-loc">Karachi</div></div></div></div>
+        <div class="review-card"><div class="review-stars">★★★★☆</div><p class="review-text">"The online booking saved me hours of waiting. Dr. Bilal was professional and the skin treatment he recommended cleared up my condition within weeks."</p><div class="review-author"><div class="review-av" style="background:#FEF3C7;color:#92400E">AR</div><div><div class="review-name">Ahmed Raza</div><div class="review-loc">Islamabad</div></div></div></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <h2>Ready to see a doctor?</h2>
+    <p>Join over 50,000 patients who've taken control of their healthcare journey.</p>
+    <button class="btn-white" onclick="showPage('booking')">Book your appointment now →</button>
+  </section>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-top">
+        <div class="footer-brand">
+          <div class="logo"><div class="logo-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="white"><path d="M12 2C9 2 7 4 7 7c0 2 1 3.5 2.5 4.5C7 13 5 15.5 5 18h14c0-2.5-2-5-4.5-6.5C16 10.5 17 9 17 7c0-3-2-5-5-5z"/><rect x="10" y="1" width="4" height="3" rx="1"/></svg></div><span style="color:white;font-size:18px;font-weight:700;margin-left:10px">Med<span style="color:#93C5FD">Connect</span></span></div>
+          <p>Pakistan's most trusted online appointment booking platform. Connecting patients with top-rated doctors across the country.</p>
+          <div class="footer-social">
+            <a class="social-btn" href="#" aria-label="Facebook">f</a>
+            <a class="social-btn" href="#" aria-label="Twitter">𝕏</a>
+            <a class="social-btn" href="#" aria-label="Instagram">📷</a>
+            <a class="social-btn" href="#" aria-label="LinkedIn">in</a>
+          </div>
+        </div>
+        <div class="footer-col"><h4>Quick links</h4><a href="#" onclick="showPage('home')">Home</a><a href="#" onclick="showPage('doctors')">Find doctors</a><a href="#" onclick="showPage('booking')">Book appointment</a><a href="#" onclick="showPage('contact')">Contact us</a></div>
+        <div class="footer-col"><h4>Specialties</h4><a href="#">Cardiology</a><a href="#">Dermatology</a><a href="#">Pediatrics</a><a href="#">Neurology</a><a href="#">Orthopedics</a></div>
+        <div class="footer-col"><h4>Contact</h4><a href="#" style="font-size:11px;word-break:normal;white-space:normal;line-height:1.6;">📍 Quaid e Millat Colony #2, Chungi Amar Sidhu, Lahore Cantt, Pakistan</a><a href="#" style="font-size:12px;">📞 0301 63 00 582</a><a href="#" style="font-size:12px;">📞 0327 47 79 044</a><a href="#" style="font-size:12px;word-break:normal;">✉️ medconnects69@gmail.com</a><a href="#" style="font-size:12px;">🕐 Mon–Sat 8am–8pm</a></div>
+      </div>
+      <div class="footer-bottom">
+        <p>© 2025 MedConnect. All rights reserved.</p>
+        <p>Privacy Policy · Terms of Service</p>
+      </div>
+    </div>
+  </footer>
+</div>
+
+<!-- ══════════════════════════════════════════ DOCTORS PAGE -->
+<div id="page-doctors" class="page">
+  <div class="page-hero">
+    <h1>Our doctors</h1>
+    <p>Browse our network of 200+ board-certified specialists across 30+ medical specializations.</p>
+  </div>
+  <div class="filter-bar">
+    <div class="filter-inner">
+      <input type="text" id="search-input" placeholder="Search by name or specialty..." oninput="filterDoctors()">
+      <select id="spec-filter" onchange="filterDoctors()">
+        <option value="">All specialties</option>
+        <option>Cardiologist</option><option>Dermatologist</option><option>Pediatrician</option>
+        <option>Orthopedic</option><option>Neurologist</option><option>General Physician</option>
+        <option>Psychiatrist</option><option>Dentist</option>
+      </select>
+      <select id="sort-filter" onchange="filterDoctors()">
+        <option value="rating">Sort: Top rated</option>
+        <option value="fee-low">Sort: Fee low–high</option>
+        <option value="fee-high">Sort: Fee high–low</option>
+      </select>
+    </div>
+  </div>
+  <div class="all-doctors-grid" id="all-doctors-grid"></div>
+</div>
+
+<!-- ══════════════════════════════════════════ BOOKING PAGE -->
+<div id="page-booking" class="page">
+  <div class="booking-page-wrap">
+    <div class="booking-header">
+      <h1>Book an appointment</h1>
+      <p>Complete the steps below to schedule your visit with a doctor.</p>
+    </div>
+
+    <div class="progress-bar" id="progress-bar">
+      <div class="prog-step active" id="ps1"><div class="prog-inner"><div class="prog-circle">1</div><div class="prog-label">Doctor</div></div></div>
+      <div class="prog-step" id="ps2"><div class="prog-inner"><div class="prog-circle">2</div><div class="prog-label">Date & time</div></div></div>
+      <div class="prog-step" id="ps3"><div class="prog-inner"><div class="prog-circle">3</div><div class="prog-label">Your details</div></div></div>
+      <div class="prog-step" id="ps4"><div class="prog-inner"><div class="prog-circle">4</div><div class="prog-label">Confirm</div></div></div>
+    </div>
+
+    <div class="booking-layout">
+      <div class="booking-main">
+
+        <!-- STEP 1: Doctor -->
+        <div class="bcard bstep active" id="bstep-1">
+          <p class="bcard-title">Choose your doctor</p>
+          <p class="bcard-sub">Select the specialist you'd like to see.</p>
+          <div class="bdoc-grid" id="bdoc-grid"></div>
+          <div class="bstep-nav">
+            <span></span>
+            <button class="btn-next" id="btn-1-next" disabled onclick="goBookStep(2)">Continue <span>→</span></button>
+          </div>
+        </div>
+
+        <!-- STEP 2: Date & Time -->
+        <div class="bcard bstep" id="bstep-2">
+          <p class="bcard-title">Pick a date & time</p>
+          <p class="bcard-sub">Choose an available slot that works for you.</p>
+          <div class="cal-nav">
+            <button class="cal-nav-btn" onclick="changeCalMonth(-1)">‹</button>
+            <span class="cal-month" id="cal-month-label"></span>
+            <button class="cal-nav-btn" onclick="changeCalMonth(1)">›</button>
+          </div>
+          <div class="cal-grid" id="cal-grid"></div>
+          <div class="time-section">
+            <p class="time-section-title">Morning</p>
+            <div class="time-grid" id="time-morning"></div>
+            <p class="time-section-title" style="margin-top:16px">Afternoon & Evening</p>
+            <div class="time-grid" id="time-afternoon"></div>
+          </div>
+          <div class="bstep-nav">
+            <button class="btn-back" onclick="goBookStep(1)">← Back</button>
+            <button class="btn-next" id="btn-2-next" disabled onclick="goBookStep(3)">Continue →</button>
+          </div>
+        </div>
+
+        <!-- STEP 3: Details -->
+        <div class="bcard bstep" id="bstep-3">
+          <p class="bcard-title">Your details</p>
+          <p class="bcard-sub">Please fill in your information accurately.</p>
+          <div class="form-grid">
+            <div class="form-field"><label for="p-name">Full name *</label><input type="text" id="p-name" placeholder="e.g. Fatima Ahmed" oninput="validatePatient()"></div>
+            <div class="form-field"><label for="p-age">Age *</label><input type="number" id="p-age" placeholder="e.g. 28" min="1" max="120" oninput="validatePatient()"></div>
+            <div class="form-field"><label for="p-phone">Phone number *</label><input type="tel" id="p-phone" placeholder="+92 300 0000000" oninput="validatePatient()"></div>
+            <div class="form-field"><label for="p-email">Email address *</label><input type="email" id="p-email" placeholder="you@email.com" oninput="validatePatient()"></div>
+            <div class="form-field"><label for="p-gender">Gender *</label>
+              <select id="p-gender" onchange="validatePatient()">
+                <option value="">Select gender</option>
+                <option>Male</option><option>Female</option><option>Other</option><option>Prefer not to say</option>
+              </select>
+            </div>
+            <div class="form-field"><label for="p-type">Visit type *</label>
+              <select id="p-type" onchange="validatePatient()">
+                <option value="">Select type</option>
+                <option>In-person visit</option><option>Video consultation</option><option>Follow-up appointment</option>
+              </select>
+            </div>
+            <div class="form-field full"><label for="p-notes">Symptoms / reason for visit (optional)</label><textarea id="p-notes" placeholder="Briefly describe your condition or reason for the visit..."></textarea></div>
+          </div>
+          <div class="bstep-nav">
+            <button class="btn-back" onclick="goBookStep(2)">← Back</button>
+            <button class="btn-next" id="btn-3-next" disabled onclick="goBookStep(4)">Review →</button>
+          </div>
+        </div>
+
+        <!-- STEP 4: Confirm -->
+        <div class="bcard bstep" id="bstep-4">
+          <p class="bcard-title">Review & confirm</p>
+          <p class="bcard-sub">Check all details before confirming your appointment.</p>
+          <div class="confirm-grid" id="confirm-grid"></div>
+          <div class="notice-box">
+            <span style="font-size:18px;flex-shrink:0">⚠️</span>
+            <span>Please arrive 10 minutes before your scheduled time. Bring a valid CNIC and any prior medical reports. Cancellations must be made at least 24 hours in advance.</span>
+          </div>
+          <div class="bstep-nav">
+            <button class="btn-back" onclick="goBookStep(3)">← Edit details</button>
+            <button class="btn-next" id="btn-confirm" onclick="confirmBooking()" style="background:var(--teal)">✓ Confirm appointment</button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SIDEBAR -->
+      <div class="booking-sidebar">
+        <div class="summary-box">
+          <div class="summary-box-head">
+            <h3>Appointment summary</h3>
+            <p>Updates as you complete each step</p>
+          </div>
+          <div class="summary-body" id="sidebar-summary"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ SUCCESS -->
+<div id="page-success" class="page">
+  <div class="success-wrap">
+    <div class="success-circle">
+      <svg viewBox="0 0 48 48" fill="none" stroke="#0FA87E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="20"/><path d="M16 24l6 6 10-12"/></svg>
+    </div>
+    <h1>Appointment confirmed!</h1>
+    <p>Your appointment has been successfully booked. A confirmation email has been sent to your address.</p>
+    <div class="ref-box">
+      <p>Booking reference</p>
+      <span id="ref-number">MC-XXXXXXXX</span>
+    </div>
+    <div class="success-summary" id="success-summary"></div>
+    <div class="success-actions">
+      <button onclick="showPage('booking');resetBooking()" class="btn-next" style="padding:12px 24px">Book another</button>
+      <button onclick="openCancelModal()" class="btn-cancel">✕ Cancel appointment</button>
+      <button onclick="showPage('home')" class="btn-back" style="padding:12px 24px">Back to home</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ MANAGE BOOKING (opened via cancel link in email) -->
+<div id="page-manage" class="page">
+  <div class="success-wrap">
+    <div id="manage-loading" style="text-align:center;padding:40px 0;color:var(--text-muted)">⏳ Aapki appointment load ho rahi hai...</div>
+
+    <div id="manage-content" style="display:none">
+      <div class="success-circle">
+        <svg viewBox="0 0 48 48" fill="none" stroke="#1A6FDB" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="20"/><path d="M24 16v14M24 35h.01"/></svg>
+      </div>
+      <h1 id="manage-title">Manage your appointment</h1>
+      <p id="manage-subtitle">Yeh aapki booking ki details hain. Aap yahan sy kabhi b cancel kr sakty hain.</p>
+      <div class="ref-box">
+        <p>Booking reference</p>
+        <span id="manage-ref">MC-XXXXXXXX</span>
+      </div>
+      <div class="success-summary" id="manage-summary"></div>
+      <div class="success-actions">
+        <button onclick="openManageCancelModal()" class="btn-cancel" id="manage-cancel-btn">✕ Cancel appointment</button>
+        <button onclick="showPage('home')" class="btn-back" style="padding:12px 24px">Back to home</button>
+      </div>
+    </div>
+
+    <div id="manage-error" style="display:none;text-align:center;padding:20px;color:var(--red)">
+      <div style="font-size:40px;margin-bottom:12px">⚠️</div>
+      <div style="font-size:18px;font-weight:700;">Appointment nahi mili</div>
+      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Yeh link invalid hai ya yeh appointment record mein maujood nahi. Apni booking reference check karein ya hospital sy contact karein.</div>
+    </div>
+  </div>
+</div>
+
+<!-- MANAGE CANCEL CONFIRM MODAL (separate from the post-booking modal so both flows work independently) -->
+<div class="cancel-confirm-overlay" id="manage-cancel-overlay">
+  <div class="cancel-confirm-box">
+    <h3>Cancel appointment?</h3>
+    <p>Kya aap waqai apni appointment cancel karna chahte hain? Aapko cancellation email bhej di jayegi.</p>
+    <div class="cancel-confirm-actions">
+      <button class="btn-back" style="padding:11px 22px" onclick="closeManageCancelModal()">Wapas jao</button>
+      <button class="btn-cancel" onclick="executeManageCancellation()">✕ Han, Cancel karo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════ CONTACT PAGE -->
+<div id="page-contact" class="page">
+  <div class="page-hero">
+    <h1>Get in touch</h1>
+    <p>Have a question? Our team is here to help, seven days a week.</p>
+  </div>
+  <section class="section">
+    <div class="section-inner">
+      <div class="contact-grid">
+        <div class="contact-info">
+          <h2>We're here for you</h2>
+          <p>Whether you need help booking, have a question about our doctors, or want to partner with us — reach out any time.</p>
+          <div class="contact-item">
+            <div class="contact-icon"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg></div>
+            <div><div class="contact-item-title">Address</div><div class="contact-item-val">Quaid e Millat Colony #2, Chungi Amar Sidhu, Lahore Cantt, Pakistan</div></div>
+          </div>
+          <div class="contact-item">
+            <div class="contact-icon"><svg viewBox="0 0 24 24"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 13.6a19.79 19.79 0 01-3.07-8.67A2 2 0 012 3h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L6.91 10.9a16 16 0 006.29 6.29l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z"/></svg></div>
+            <div><div class="contact-item-title">Phone</div><div class="contact-item-val">0301 63 00 582</div><div class="contact-item-val">0327 47 79 044</div></div>
+          </div>
+          <div class="contact-item">
+            <div class="contact-icon"><svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg></div>
+            <div style="min-width:0;flex:1;"><div class="contact-item-title">Email</div><div class="contact-item-val">medconnects69@gmail.com</div></div>
+          </div>
+          <div class="contact-item">
+            <div class="contact-icon"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/></svg></div>
+            <div><div class="contact-item-title">Hours</div><div class="contact-item-val">Monday–Saturday, 8:00 AM – 8:00 PM</div></div>
+          </div>
+        </div>
+        <div class="contact-form-box">
+          <h3>Send us a message</h3>
+          <p>We'll get back to you within 24 hours.</p>
+          <div style="display:flex;flex-direction:column;gap:14px">
+            <div class="form-field"><label>Your name</label><input type="text" placeholder="Full name"></div>
+            <div class="form-field"><label>Email address</label><input type="email" placeholder="you@email.com"></div>
+            <div class="form-field"><label>Subject</label><select><option>General inquiry</option><option>Booking help</option><option>Doctor feedback</option><option>Partnership</option><option>Technical support</option></select></div>
+            <div class="form-field"><label>Message</label><textarea style="min-height:120px" placeholder="How can we help you?"></textarea></div>
+            <button class="btn-send" onclick="sendContact()">Send message →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- CANCEL CONFIRM MODAL -->
+<div class="cancel-confirm-overlay" id="cancel-overlay">
+  <div class="cancel-confirm-box">
+    <div style="width:64px;height:64px;border-radius:50%;background:var(--red-light);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:28px;">❌</div>
+    <h3>Cancel appointment?</h3>
+    <p>Kya aap waqai apni appointment cancel karna chahte hain? Patient ko cancellation email bhej di jayegi.</p>
+    <div class="cancel-confirm-actions">
+      <button class="btn-back" style="padding:11px 22px" onclick="closeCancelModal()">Wapas jao</button>
+      <button class="btn-cancel" onclick="executeCancellation()">✕ Han, Cancel karo</button>
+    </div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+const DOCTORS = [
+  { id:1, name:'Dr. Ayesha Khan', spec:'Cardiologist', fee:2500, exp:'12 years', rating:4.9, avail:'Mon–Fri', init:'AK', bg:'#DBEAFE', col:'#1D4ED8', gender:'Female' },
+  { id:2, name:'Dr. Bilal Raza', spec:'Dermatologist', fee:1800, exp:'8 years', rating:4.7, avail:'Mon–Sat', init:'BR', bg:'#D1FAE5', col:'#065F46', gender:'Male' },
+  { id:3, name:'Dr. Sara Malik', spec:'Pediatrician', fee:2000, exp:'10 years', rating:4.8, avail:'Tue–Sat', init:'SM', bg:'#FCE7F3', col:'#9D174D', gender:'Female' },
+  { id:4, name:'Dr. Omar Sheikh', spec:'Orthopedic', fee:3000, exp:'15 years', rating:4.9, avail:'Mon–Thu', init:'OS', bg:'#FEF3C7', col:'#92400E', gender:'Male' },
+  { id:5, name:'Dr. Nadia Ali', spec:'Neurologist', fee:2800, exp:'11 years', rating:4.6, avail:'Wed–Sat', init:'NA', bg:'#EDE9FE', col:'#5B21B6', gender:'Female' },
+  { id:6, name:'Dr. Kamran Tariq', spec:'General Physician', fee:1200, exp:'6 years', rating:4.5, avail:'Mon–Sat', init:'KT', bg:'#CCFBF1', col:'#0F766E', gender:'Male' },
+  { id:7, name:'Dr. Hina Baig', spec:'Psychiatrist', fee:3500, exp:'14 years', rating:4.8, avail:'Mon–Fri', init:'HB', bg:'#FDF4FF', col:'#7E22CE', gender:'Female' },
+  { id:8, name:'Dr. Zain ul Abideen', spec:'Dentist', fee:1500, exp:'7 years', rating:4.6, avail:'Tue–Sat', init:'ZA', bg:'#ECFDF5', col:'#064E3B', gender:'Male' }
+];
+
+const MORNING = ['08:00 AM','08:30 AM','09:00 AM','09:30 AM','10:00 AM','10:30 AM','11:00 AM','11:30 AM'];
+const AFTERNOON = ['12:00 PM','01:00 PM','02:00 PM','02:30 PM','03:00 PM','03:30 PM','04:00 PM','04:30 PM','05:00 PM','05:30 PM'];
+
+// Booked slots by current user: key = "date|time|doctorId"
+let bookedSlots = {};
+let currentBooking = null; // stores last confirmed booking info
+
+let state = { doctor:null, date:null, time:null, calYear:null, calMonth:null };
+
+function init() {
+  const now = new Date();
+  state.calYear = now.getFullYear();
+  state.calMonth = now.getMonth();
+  renderHeroDocs();
+  renderHomeDoctors();
+  renderAllDoctors(DOCTORS);
+  renderBDocs();
+  renderCalendar();
+  renderTimeSlots();
+  updateSidebar();
+}
+
+// ── NAV
+function showPage(p) {
+  document.querySelectorAll('.page').forEach(el => el.classList.remove('active'));
+  document.getElementById('page-'+p).classList.add('active');
+  ['home','doctors','booking','contact'].forEach(n => document.getElementById('nav-'+n)?.classList.remove('active'));
+  document.getElementById('nav-'+p)?.classList.add('active');
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
+function toggleMenu() {
+  const links = document.querySelector('.nav-links');
+  links.style.display = links.style.display === 'flex' ? 'none' : 'flex';
+}
+
+function filterAndShow(spec) {
+  showPage('doctors');
+  document.getElementById('spec-filter').value = spec;
+  filterDoctors();
+  return false;
+}
+
+// ── HERO DOCS
+function renderHeroDocs() {
+  document.getElementById('hero-docs').innerHTML = DOCTORS.slice(0,3).map(d => `
+    <div class="quick-doc" onclick="preSelectDoc(${d.id});showPage('booking')">
+      <div class="quick-doc-av" style="background:${d.bg};color:${d.col}">${d.init}</div>
+      <div class="quick-doc-info">
+        <div class="quick-doc-name">${d.name}</div>
+        <div class="quick-doc-spec">${d.spec} · ${d.avail}</div>
+      </div>
+      <div class="quick-doc-fee">Rs. ${d.fee.toLocaleString()}</div>
+    </div>`).join('');
+}
+
+// ── DOCTOR CARDS
+function doctorCard(d, showBook=true) {
+  const stars = '★'.repeat(Math.floor(d.rating)) + (d.rating%1>=0.5?'½':'') + '☆'.repeat(5-Math.ceil(d.rating));
+  return `
+  <div class="doctor-card">
+    <div class="doctor-card-top">
+      <div class="doc-header">
+        <div class="doc-av" style="background:${d.bg};color:${d.col}">${d.init}</div>
+        <div>
+          <div class="doc-title">${d.name}</div>
+          <span class="doc-spec-tag">${d.spec}</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+        <div class="doc-rating">★ ${d.rating}</div>
+        <span style="font-size:12px;background:var(--teal-light);color:var(--teal);padding:3px 10px;border-radius:20px;font-weight:600">Available</span>
+      </div>
+      <div class="doc-meta">
+        <div class="doc-meta-item">🕐 ${d.exp} exp.</div>
+        <div class="doc-meta-item">📅 ${d.avail}</div>
+        <div class="doc-meta-item">👤 ${d.gender}</div>
+        <div class="doc-meta-item">💬 In-person</div>
+      </div>
+    </div>
+    <div class="doctor-card-bottom">
+      <div><div class="doc-fee-label">Consultation fee</div><div class="doc-fee-val">Rs. ${d.fee.toLocaleString()}</div></div>
+      ${showBook ? `<button class="btn-book-doc" onclick="preSelectDoc(${d.id});showPage('booking')">Book now</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderHomeDoctors() {
+  document.getElementById('home-doctors').innerHTML = DOCTORS.slice(0,4).map(d=>doctorCard(d)).join('');
+}
+
+function renderAllDoctors(docs) {
+  document.getElementById('all-doctors-grid').innerHTML = docs.length
+    ? docs.map(d=>doctorCard(d)).join('')
+    : '<p style="grid-column:1/-1;text-align:center;color:var(--text-muted);padding:60px">No doctors found matching your search.</p>';
+}
+
+function filterDoctors() {
+  const q = document.getElementById('search-input').value.toLowerCase();
+  const spec = document.getElementById('spec-filter').value;
+  const sort = document.getElementById('sort-filter').value;
+  let list = DOCTORS.filter(d => {
+    const matchQ = !q || d.name.toLowerCase().includes(q) || d.spec.toLowerCase().includes(q);
+    const matchS = !spec || d.spec === spec;
+    return matchQ && matchS;
+  });
+  if(sort==='rating') list.sort((a,b)=>b.rating-a.rating);
+  if(sort==='fee-low') list.sort((a,b)=>a.fee-b.fee);
+  if(sort==='fee-high') list.sort((a,b)=>b.fee-a.fee);
+  renderAllDoctors(list);
+}
+
+// ── BOOKING
+function renderBDocs() {
+  document.getElementById('bdoc-grid').innerHTML = DOCTORS.map(d => `
+    <div class="bdoc-item" id="bdoc-${d.id}" onclick="selectDoctor(${d.id})">
+      <div class="bdoc-item-top">
+        <div class="bdoc-av" style="background:${d.bg};color:${d.col}">${d.init}</div>
+        <div><div class="bdoc-name">${d.name}</div><div class="bdoc-spec">${d.spec}</div></div>
+        <div class="selected-check"><svg width="10" height="10" viewBox="0 0 12 12" fill="white"><polyline points="2,6 5,9 10,3" stroke="white" stroke-width="2" fill="none" stroke-linecap="round"/></svg></div>
+      </div>
+      <div class="bdoc-item-bottom">
+        <div class="bdoc-fee">Rs. ${d.fee.toLocaleString()}</div>
+        <div class="bdoc-stars">★ ${d.rating} · ${d.exp}</div>
+      </div>
+    </div>`).join('');
+}
+
+async function selectDoctor(id) {
+  state.doctor = id;
+  document.querySelectorAll('.bdoc-item').forEach(el => el.classList.remove('selected'));
+  document.getElementById('bdoc-'+id).classList.add('selected');
+  document.getElementById('btn-1-next').disabled = false;
+  updateSidebar();
+
+  // ☁️ Supabase se is doctor ke booked slots load karo
+  if(window.loadBookedSlotsFromDB) {
+    showToast('⏳ Slots check ho rahe hain...', 'success');
+    const dbSlots = await window.loadBookedSlotsFromDB(id);
+    // Merge with local slots
+    Object.assign(bookedSlots, dbSlots);
+    renderTimeSlots();
+    showToast('✓ Availability updated!', 'success');
+  }
+}
+
+async function preSelectDoc(id) {
+  state.doctor = id;
+  resetBookingSteps();
+  goBookStep(1);
+  setTimeout(async () => {
+    document.querySelectorAll('.bdoc-item').forEach(el => el.classList.remove('selected'));
+    const el = document.getElementById('bdoc-'+id);
+    if(el) { el.classList.add('selected'); }
+    document.getElementById('btn-1-next').disabled = false;
+    updateSidebar();
+
+    // ☁️ Supabase se fresh slots load karo (refresh ke baad bhi kaam kare)
+    if(window.loadBookedSlotsFromDB) {
+      showToast('⏳ Slots check ho rahe hain...', 'success');
+      const dbSlots = await window.loadBookedSlotsFromDB(id);
+      Object.assign(bookedSlots, dbSlots);
+      renderTimeSlots();
+      showToast('✓ Availability updated!', 'success');
+    }
+
+    goBookStep(2);
+  }, 100);
+}
+
+function changeCalMonth(dir) {
+  state.calMonth += dir;
+  if(state.calMonth > 11) { state.calMonth = 0; state.calYear++; }
+  if(state.calMonth < 0) { state.calMonth = 11; state.calYear--; }
+  state.date = null;
+  state.time = null;
+  document.getElementById('btn-2-next').disabled = true;
+  renderCalendar(); renderTimeSlots(); updateSidebar();
+}
+
+function renderCalendar() {
+  const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const DAYS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  document.getElementById('cal-month-label').textContent = MONTHS[state.calMonth] + ' ' + state.calYear;
+  const now = new Date(); now.setHours(0,0,0,0);
+  const first = new Date(state.calYear, state.calMonth, 1);
+  const total = new Date(state.calYear, state.calMonth+1, 0).getDate();
+  const start = first.getDay();
+  let html = DAYS.map(d=>`<div class="cal-day-hdr">${d}</div>`).join('');
+  for(let i=0;i<start;i++) html += '<div class="cal-day empty"></div>';
+  for(let d=1;d<=total;d++){
+    const dt = new Date(state.calYear,state.calMonth,d);
+    const dow = dt.getDay();
+    const disabled = dt < now || dow===0 || dow===6;
+    const ds = `${state.calYear}-${String(state.calMonth+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const isToday = dt.getTime()===now.getTime();
+    const selected = state.date===ds;
+    html += `<div class="cal-day${disabled?' disabled':''}${selected?' selected':''}${isToday&&!selected?' today':''}" ${!disabled?`onclick="selectDate('${ds}')"`:''}>${d}</div>`;
+  }
+  document.getElementById('cal-grid').innerHTML = html;
+}
+
+function selectDate(ds) {
+  state.date = ds; state.time = null;
+  document.getElementById('btn-2-next').disabled = true;
+  renderCalendar(); renderTimeSlots(); updateSidebar();
+}
+
+function renderTimeSlots() {
+  const mk = (arr, id) => {
+    document.getElementById(id).innerHTML = arr.map(t => {
+      const slotKey = state.date ? `${state.date}|${t}|${state.doctor}` : null;
+      const taken = !!(slotKey && bookedSlots[slotKey]);
+      const sel = state.time===t;
+      if(taken) {
+        return `<div class="time-chip taken" title="Yeh slot book ho chuki hai">${t} <span aria-hidden="true">✓</span></div>`;
+      }
+      return `<div class="time-chip${sel?' selected':''}" onclick="selectTime('${t}')">${t}</div>`;
+    }).join('');
+  };
+  mk(MORNING, 'time-morning');
+  mk(AFTERNOON, 'time-afternoon');
+}
+
+function selectTime(t) {
+  state.time = t;
+  if(state.date) document.getElementById('btn-2-next').disabled = false;
+  renderTimeSlots(); updateSidebar();
+}
+
+function validatePatient() {
+  const phone = document.getElementById('p-phone').value.trim();
+  const email = document.getElementById('p-email').value.trim();
+
+  // Phone: 11 digits, 03 se shuru ho
+  const phoneValid = /^03[0-9]{9}$/.test(phone);
+
+  // Email: valid format
+  const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+
+  const ok = document.getElementById('p-name').value.trim()
+    && document.getElementById('p-age').value.trim()
+    && document.getElementById('p-gender').value
+    && document.getElementById('p-type').value
+    && phoneValid
+    && emailValid;
+
+  document.getElementById('btn-3-next').disabled = !ok;
+
+  // Phone error message
+  const phoneField = document.getElementById('p-phone');
+  if (phone && !phoneValid) {
+    phoneField.style.borderColor = '#dc2626';
+    phoneField.title = '11 digit ka Pakistani number likhen (03XXXXXXXXX)';
+  } else {
+    phoneField.style.borderColor = '';
+    phoneField.title = '';
+  }
+
+  // Email error message
+  const emailField = document.getElementById('p-email');
+  if (email && !emailValid) {
+    emailField.style.borderColor = '#dc2626';
+    emailField.title = 'Valid email likhen (example@gmail.com)';
+  } else {
+    emailField.style.borderColor = '';
+    emailField.title = '';
+  }
+}
+
+function goBookStep(n) {
+  for(let i=1;i<=4;i++){
+    document.getElementById('bstep-'+i).classList.toggle('active', i===n);
+    const ps = document.getElementById('ps'+i);
+    ps.classList.remove('active','done');
+    if(i<n) ps.classList.add('done');
+    else if(i===n) ps.classList.add('active');
+  }
+  if(n===2) {
+    renderTimeSlots(); // turant local state se refresh karo
+    if(state.doctor && window.loadBookedSlotsFromDB) {
+      // ☁️ Background mein fresh slots bhi le aao (dusre browsers ki bookings ke liye)
+      window.loadBookedSlotsFromDB(state.doctor).then(dbSlots => {
+        Object.assign(bookedSlots, dbSlots);
+        renderTimeSlots();
+      });
+    }
+  }
+  if(n===4) renderConfirm();
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+
+function getDateStr() {
+  if(!state.date) return null;
+  const [y,m,d] = state.date.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${d} ${months[parseInt(m)-1]} ${y}`;
+}
+
+function updateSidebar() {
+  const doc = DOCTORS.find(d=>d.id===state.doctor);
+  const rows = [
+    {k:'Doctor', v: doc ? doc.name : null},
+    {k:'Specialty', v: doc ? doc.spec : null},
+    {k:'Date', v: getDateStr()},
+    {k:'Time', v: state.time},
+    {k:'Fee', v: doc ? `Rs. ${doc.fee.toLocaleString()}` : null}
+  ];
+  document.getElementById('sidebar-summary').innerHTML = rows.map(r=>`
+    <div class="summ-row">
+      <span class="summ-key">${r.k}</span>
+      <span class="summ-val ${!r.v?'summ-placeholder':''}">${r.v || 'Not selected'}</span>
+    </div>`).join('');
+}
+
+function renderConfirm() {
+  const doc = DOCTORS.find(d=>d.id===state.doctor);
+  const name = document.getElementById('p-name').value;
+  const age = document.getElementById('p-age').value;
+  const phone = document.getElementById('p-phone').value;
+  const email = document.getElementById('p-email').value;
+  const type = document.getElementById('p-type').value;
+  const notes = document.getElementById('p-notes').value;
+  const items = [
+    {l:'Doctor',v:doc.name},{l:'Specialty',v:doc.spec},
+    {l:'Date',v:getDateStr()},{l:'Time',v:state.time},
+    {l:'Visit type',v:type},{l:'Patient name',v:name},
+    {l:'Age',v:age},{l:'Phone',v:phone},
+    {l:'Email',v:email},{l:'Consultation fee',v:`Rs. ${doc.fee.toLocaleString()}`}
+  ];
+  if(notes) items.push({l:'Notes',v:notes,full:true});
+  document.getElementById('confirm-grid').innerHTML = items.map(i=>
+    `<div class="confirm-section${i.full?' confirm-full':''}"><div class="confirm-label">${i.l}</div><div class="confirm-val">${i.v}</div></div>`
+  ).join('');
+}
+
+async function confirmBooking() {
+  const doc = DOCTORS.find(d=>d.id===state.doctor);
+  const name    = document.getElementById('p-name').value.trim();
+  const age     = document.getElementById('p-age').value.trim();
+  const type    = document.getElementById('p-type').value;
+  const email   = document.getElementById('p-email').value.trim();
+  const phone   = document.getElementById('p-phone').value.trim();
+  const gender  = document.getElementById('p-gender').value;
+  const notes   = document.getElementById('p-notes').value.trim();
+  const dateStr = getDateStr();
+
+  const btn = document.getElementById('btn-confirm');
+  const btnOriginalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Booking ho rahi hai...';
+
+  // ✅ Race condition check: Supabase se real-time verify karo ke slot abhi bhi available hai
+  if(window.loadBookedSlotsFromDB) {
+    showToast('⏳ Slot verify ho raha hai...', 'success');
+    const freshSlots = await window.loadBookedSlotsFromDB(state.doctor);
+    Object.assign(bookedSlots, freshSlots);
+    const slotKeyCheck = `${state.date}|${state.time}|${state.doctor}`;
+    if(bookedSlots[slotKeyCheck]) {
+      showToast('❌ Yeh slot abhi kisi ne book kar li! Koi aur time chunein.', 'error');
+      renderTimeSlots();
+      btn.disabled = false;
+      btn.textContent = btnOriginalText;
+      goBookStep(2);
+      return;
+    }
+  }
+
+  const ref = 'MC-' + Math.random().toString(36).substr(2,8).toUpperCase();
+
+  // ☁️ Pehle Supabase mein save karo, aur SIRF tab success dikhao jab save confirm ho jaye.
+  // (Pehle yahan success page turant dikha dete the, DB save ka result check kiye bina —
+  //  isi liye DB save fail hone par bhi patient ko "booked" dikhta tha, asal mein
+  //  appointment kahin save nahi hoti thi.)
+  let supabaseId = null;
+  if(window.saveAppointmentToDB) {
+    supabaseId = await window.saveAppointmentToDB({
+      refNumber:    ref,
+      doctorId:     state.doctor,
+      doctorName:   doc.name,
+      specialty:    doc.spec,
+      date:         state.date,
+      time:         state.time,
+      patientName:  name,
+      patientAge:   age,
+      patientPhone: phone,
+      patientEmail: email,
+      patientGender:gender,
+      visitType:    type,
+      notes:        notes,
+      fee:          doc.fee
+    });
+
+    if(!supabaseId) {
+      // DB save fail ho gaya — success page mat dikhao, user ko clearly batao
+      btn.disabled = false;
+      btn.textContent = btnOriginalText;
+      showToast('⚠️ Booking save nahi hui. Internet check karein ya dobara try karein.', 'error');
+      return;
+    }
+  } else {
+    // Backend hi load nahi hua (script block fail) — booking ko fail treat karo
+    btn.disabled = false;
+    btn.textContent = btnOriginalText;
+    showToast('⚠️ Booking system load nahi hua. Page reload kar ke dobara try karein.', 'error');
+    return;
+  }
+
+  document.getElementById('ref-number').textContent = ref;
+
+  // Save booked slot locally (instant UI update)
+  const slotKey = `${state.date}|${state.time}|${state.doctor}`;
+  bookedSlots[slotKey] = true;
+  renderTimeSlots(); // ✅ slot grid ko turant refresh karo taake yeh slot fauran "booked" dikhay
+
+  // Store current booking for cancel flow
+  currentBooking = {
+    ref, doc, name, email, phone, type,
+    date: dateStr, time: state.time,
+    slotKey,
+    supabaseId
+  };
+
+  // ✅ Save confirm ho gaya — ab success page dikhao
+  document.getElementById('success-summary').innerHTML = `
+    <div class="summ-row"><span class="summ-key">Doctor</span><span class="summ-val">${doc.name}</span></div>
+    <div class="summ-row"><span class="summ-key">Specialty</span><span class="summ-val">${doc.spec}</span></div>
+    <div class="summ-row"><span class="summ-key">Date & Time</span><span class="summ-val">${dateStr}, ${state.time}</span></div>
+    <div class="summ-row"><span class="summ-key">Patient</span><span class="summ-val">${name}</span></div>
+    <div class="summ-row"><span class="summ-key">Visit type</span><span class="summ-val">${type}</span></div>
+    <div class="summ-row"><span class="summ-key">Fee</span><span class="summ-val">Rs. ${doc.fee.toLocaleString()}</span></div>`;
+  showPage('success');
+  showToast('✓ Appointment confirm ho gai!', 'success');
+
+  btn.disabled = false;
+  btn.textContent = btnOriginalText;
+
+  // 📧 DB save confirm hone ke baad confirmation email bhejo
+  if(window.sendConfirmationEmail) {
+    const cancelLink = 'https://medconnect6.vercel.app/?cancel=' + ref;
+    window.sendConfirmationEmail({
+      email, name,
+      doctorName: doc.name,
+      specialty:  doc.spec,
+      date:       dateStr,
+      time:       state.time,
+      visitType:  type,
+      ref,
+      fee:        'Rs. ' + doc.fee.toLocaleString(),
+      cancelLink
+    }).then(ok => {
+      if(ok) showToast('✓ Confirmation email send ho gai!', 'success');
+    });
+  }
+}
+
+function resetBookingSteps() {
+  state.date = null; state.time = null;
+  document.getElementById('btn-1-next').disabled = !state.doctor;
+  document.getElementById('btn-2-next').disabled = true;
+  document.getElementById('btn-3-next').disabled = true;
+}
+
+function resetBooking() {
+  state = { doctor:null, date:null, time:null, calYear:new Date().getFullYear(), calMonth:new Date().getMonth() };
+  ['p-name','p-age','p-phone','p-email'].forEach(id=>document.getElementById(id).value='');
+  ['p-gender','p-type'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('p-notes').value='';
+  document.getElementById('btn-1-next').disabled = true;
+  document.getElementById('btn-2-next').disabled = true;
+  document.getElementById('btn-3-next').disabled = true;
+  renderBDocs();
+  renderCalendar();
+  renderTimeSlots();
+  updateSidebar();
+  goBookStep(1);
+}
+
+function openCancelModal() {
+  document.getElementById('cancel-overlay').classList.add('show');
+}
+
+function closeCancelModal() {
+  document.getElementById('cancel-overlay').classList.remove('show');
+}
+
+async function executeCancellation() {
+  if(!currentBooking) return;
+  closeCancelModal();
+
+  // Slot free karo locally
+  if(currentBooking.slotKey) {
+    delete bookedSlots[currentBooking.slotKey];
+  }
+
+  // ☁️ Supabase mein status cancel karo
+  if(currentBooking.supabaseId && window.cancelAppointmentInDB) {
+    await window.cancelAppointmentInDB(currentBooking.supabaseId);
+  }
+
+  const { name, email, doc, date, time, ref } = currentBooking;
+
+  // 📧 Cancellation email bhejo
+  if(window.sendCancellationEmail) {
+    window.sendCancellationEmail({
+      email, name,
+      doctorName: doc.name,
+      date, time, ref
+    }).then(ok => {
+      if(ok) showToast('Cancellation email send ho gai!', 'success');
+      else   showToast('Appointment cancel ho gai (email fail).', 'error');
+    });
+  }
+  currentBooking = null;
+
+  // Success page update karo - cancelled dikao
+  document.getElementById('success-summary').innerHTML = `
+    <div style="text-align:center;padding:20px;color:var(--red)">
+      <div style="font-size:40px;margin-bottom:12px">❌</div>
+      <div style="font-size:18px;font-weight:700;">Appointment Cancel Ho Gai</div>
+      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Aapko email mein cancellation confirmation mil jayegi.</div>
+    </div>`;
+
+  document.querySelector('.success-wrap h1').textContent = 'Appointment Cancelled';
+  document.querySelector('.success-wrap > p').textContent = 'Aapki appointment successfully cancel ho gai hai.';
+  document.getElementById('ref-number').textContent = ref + ' (CANCELLED)';
+  document.getElementById('ref-number').style.textDecoration = 'line-through';
+  document.getElementById('ref-number').style.color = 'var(--red)';
+
+  // Cancel button hatao
+  const cancelBtn = document.querySelector('.btn-cancel');
+  if(cancelBtn) cancelBtn.style.display = 'none';
+
+  showToast('✓ Appointment cancel ho gai!', 'success');
+}
+
+// ══════════════════════════════════════════════════════════
+// MANAGE BOOKING VIA EMAIL LINK — patient ne email mein "Cancel
+// appointment" button par click kiya hai (?cancel=REF in URL)
+// ══════════════════════════════════════════════════════════
+let manageBooking = null;
+
+function formatDbDateStr(ds) {
+  if(!ds) return '';
+  const parts = ds.split('-');
+  if(parts.length !== 3) return ds;
+  const [y,m,d] = parts;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${d} ${months[parseInt(m)-1]} ${y}`;
+}
+
+async function checkUrlForCancelRequest() {
+  const params = new URLSearchParams(window.location.search);
+  const ref = params.get('cancel');
+  if(!ref) return;
+
+  showPage('manage');
+  document.getElementById('manage-loading').style.display = 'block';
+  document.getElementById('manage-content').style.display = 'none';
+  document.getElementById('manage-error').style.display = 'none';
+
+  const row = window.getAppointmentByRef ? await window.getAppointmentByRef(ref) : null;
+  document.getElementById('manage-loading').style.display = 'none';
+
+  if(!row) {
+    document.getElementById('manage-error').style.display = 'block';
+    return;
+  }
+
+  manageBooking = row;
+  document.getElementById('manage-content').style.display = 'block';
+  document.getElementById('manage-ref').textContent = row.ref_number;
+  document.getElementById('manage-summary').innerHTML = `
+    <div class="summ-row"><span class="summ-key">Doctor</span><span class="summ-val">${row.doctor_name}</span></div>
+    <div class="summ-row"><span class="summ-key">Specialty</span><span class="summ-val">${row.specialty}</span></div>
+    <div class="summ-row"><span class="summ-key">Date & Time</span><span class="summ-val">${formatDbDateStr(row.date)}, ${row.time}</span></div>
+    <div class="summ-row"><span class="summ-key">Patient</span><span class="summ-val">${row.patient_name}</span></div>
+    <div class="summ-row"><span class="summ-key">Visit type</span><span class="summ-val">${row.visit_type}</span></div>
+    <div class="summ-row"><span class="summ-key">Fee</span><span class="summ-val">Rs. ${Number(row.fee).toLocaleString()}</span></div>`;
+
+  if(row.status === 'cancelled') {
+    document.getElementById('manage-title').textContent = 'Already cancelled';
+    document.getElementById('manage-subtitle').textContent = 'Yeh appointment pehle hi cancel ho chuki hai.';
+    document.getElementById('manage-ref').style.textDecoration = 'line-through';
+    document.getElementById('manage-ref').style.color = 'var(--red)';
+    document.getElementById('manage-cancel-btn').style.display = 'none';
+  }
+}
+
+function openManageCancelModal() {
+  document.getElementById('manage-cancel-overlay').classList.add('show');
+}
+
+function closeManageCancelModal() {
+  document.getElementById('manage-cancel-overlay').classList.remove('show');
+}
+
+async function executeManageCancellation() {
+  if(!manageBooking) return;
+  closeManageCancelModal();
+
+  if(manageBooking.id && window.cancelAppointmentInDB) {
+    await window.cancelAppointmentInDB(manageBooking.id);
+  }
+
+  // Local slot cache sy b free karo (agar same browser session mein dobara book karein)
+  const slotKey = `${manageBooking.date}|${manageBooking.time}|${manageBooking.doctor_id}`;
+  delete bookedSlots[slotKey];
+
+  if(window.sendCancellationEmail) {
+    window.sendCancellationEmail({
+      email: manageBooking.patient_email,
+      name:  manageBooking.patient_name,
+      doctorName: manageBooking.doctor_name,
+      date: manageBooking.date,
+      time: manageBooking.time,
+      ref:  manageBooking.ref_number
+    }).then(ok => {
+      if(ok) showToast('Cancellation email send ho gai!', 'success');
+      else   showToast('Appointment cancel ho gai (email fail).', 'error');
+    });
+  }
+
+  document.getElementById('manage-title').textContent = 'Appointment cancelled';
+  document.getElementById('manage-subtitle').textContent = 'Aapki appointment successfully cancel ho gai hai. Confirmation email aa jayegi.';
+  document.getElementById('manage-ref').textContent = manageBooking.ref_number + ' (CANCELLED)';
+  document.getElementById('manage-ref').style.textDecoration = 'line-through';
+  document.getElementById('manage-ref').style.color = 'var(--red)';
+  document.getElementById('manage-cancel-btn').style.display = 'none';
+  manageBooking = null;
+
+  showToast('✓ Appointment cancel ho gai!', 'success');
+}
+
+async function sendContact() {
+  const nameEl    = document.querySelector('.contact-form-box input[type="text"]');
+  const emailEl   = document.querySelector('.contact-form-box input[type="email"]');
+  const subjectEl = document.querySelector('.contact-form-box select');
+  const msgEl     = document.querySelector('.contact-form-box textarea');
+
+  const name    = nameEl?.value.trim();
+  const email   = emailEl?.value.trim();
+  const subject = subjectEl?.value;
+  const message = msgEl?.value.trim();
+
+  if(!name || !email || !message) {
+    showToast('⚠️ Name, email aur message zaroor bharo.', 'error');
+    return;
+  }
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    showToast('⚠️ Valid email address likhein.', 'error');
+    return;
+  }
+
+  const btn = document.querySelector('.btn-send');
+  if(btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+
+  const ok = window.sendContactEmail
+    ? await window.sendContactEmail({ name, email, subject, message })
+    : false;
+
+  if(btn) { btn.disabled = false; btn.textContent = 'Send message →'; }
+
+  if(ok) {
+    showToast('✓ Message send ho gaya! 24 ghante mein reply milegi.', 'success');
+    if(nameEl)    nameEl.value = '';
+    if(emailEl)   emailEl.value = '';
+    if(msgEl)     msgEl.value = '';
+    if(subjectEl) subjectEl.selectedIndex = 0;
+  } else {
+    showToast('❌ Message send nahi hua. Dobara try karein.', 'error');
+  }
+}
+
+function showToast(msg, type='success') {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + type;
+  setTimeout(() => t.classList.remove('show'), 3500);
+}
+
+init();
+checkUrlForCancelRequest();
+</script>
+</body>
+</html>
