@@ -146,9 +146,11 @@ window.saveAppointmentToDB = async function(data) {
     }]).select().single();
     if (error) throw error;
     console.log('✅ Appointment saved to Supabase:', row.id);
+    window.lastSaveError = null;
     return row.id;
   } catch(e) {
     console.error('❌ Supabase save error:', e.message);
+    window.lastSaveError = e.message || 'Unknown error';
     return null;
   }
 };
@@ -1093,7 +1095,7 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
             <div class="form-field"><label for="p-type">Visit type *</label>
               <select id="p-type" onchange="validatePatient()">
                 <option value="">Select type</option>
-                <option>In-person visit</option><option>Video consultation</option><option>Follow-up appointment</option>
+                <option>In-person visit</option><option>Follow-up appointment</option>
               </select>
             </div>
             <div class="form-field full"><label for="p-notes">Symptoms / reason for visit (optional)</label><textarea id="p-notes" placeholder="Briefly describe your condition or reason for the visit..."></textarea></div>
@@ -1159,14 +1161,14 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
 <!-- ══════════════════════════════════════════ MANAGE BOOKING (opened via cancel link in email) -->
 <div id="page-manage" class="page">
   <div class="success-wrap">
-    <div id="manage-loading" style="text-align:center;padding:40px 0;color:var(--text-muted)">⏳ Aapki appointment load ho rahi hai...</div>
+    <div id="manage-loading" style="text-align:center;padding:40px 0;color:var(--text-muted)">⏳ Loading your appointment...</div>
 
     <div id="manage-content" style="display:none">
       <div class="success-circle">
         <svg viewBox="0 0 48 48" fill="none" stroke="#1A6FDB" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="20"/><path d="M24 16v14M24 35h.01"/></svg>
       </div>
       <h1 id="manage-title">Manage your appointment</h1>
-      <p id="manage-subtitle">Yeh aapki booking ki details hain. Aap yahan sy kabhi b cancel kr sakty hain.</p>
+      <p id="manage-subtitle">Here are your booking details. You can cancel your appointment from here anytime.</p>
       <div class="ref-box">
         <p>Booking reference</p>
         <span id="manage-ref">MC-XXXXXXXX</span>
@@ -1180,8 +1182,8 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
 
     <div id="manage-error" style="display:none;text-align:center;padding:20px;color:var(--red)">
       <div style="font-size:40px;margin-bottom:12px">⚠️</div>
-      <div style="font-size:18px;font-weight:700;">Appointment nahi mili</div>
-      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Yeh link invalid hai ya yeh appointment record mein maujood nahi. Apni booking reference check karein ya hospital sy contact karein.</div>
+      <div style="font-size:18px;font-weight:700;">Appointment not found</div>
+      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">This link is invalid or the appointment does not exist in our records. Please check your booking reference or contact the hospital.</div>
     </div>
   </div>
 </div>
@@ -1190,10 +1192,10 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
 <div class="cancel-confirm-overlay" id="manage-cancel-overlay">
   <div class="cancel-confirm-box">
     <h3>Cancel appointment?</h3>
-    <p>Kya aap waqai apni appointment cancel karna chahte hain? Aapko cancellation email bhej di jayegi.</p>
+    <p>Are you sure you want to cancel your appointment? A cancellation email will be sent to you.</p>
     <div class="cancel-confirm-actions">
-      <button class="btn-back" style="padding:11px 22px" onclick="closeManageCancelModal()">Wapas jao</button>
-      <button class="btn-cancel" onclick="executeManageCancellation()">✕ Han, Cancel karo</button>
+      <button class="btn-back" style="padding:11px 22px" onclick="closeManageCancelModal()">Go back</button>
+      <button class="btn-cancel" onclick="executeManageCancellation()">✕ Yes, cancel it</button>
     </div>
   </div>
 </div>
@@ -1248,10 +1250,10 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
   <div class="cancel-confirm-box">
     <div style="width:64px;height:64px;border-radius:50%;background:var(--red-light);display:flex;align-items:center;justify-content:center;margin:0 auto 20px;font-size:28px;">❌</div>
     <h3>Cancel appointment?</h3>
-    <p>Kya aap waqai apni appointment cancel karna chahte hain? Patient ko cancellation email bhej di jayegi.</p>
+    <p>Are you sure you want to cancel this appointment? A cancellation email will be sent to the patient.</p>
     <div class="cancel-confirm-actions">
-      <button class="btn-back" style="padding:11px 22px" onclick="closeCancelModal()">Wapas jao</button>
-      <button class="btn-cancel" onclick="executeCancellation()">✕ Han, Cancel karo</button>
+      <button class="btn-back" style="padding:11px 22px" onclick="closeCancelModal()">Go back</button>
+      <button class="btn-cancel" onclick="executeCancellation()">✕ Yes, cancel it</button>
     </div>
   </div>
 </div>
@@ -1408,7 +1410,7 @@ async function selectDoctor(id) {
 
   // ☁️ Supabase se is doctor ke booked slots load karo
   if(window.loadBookedSlotsFromDB) {
-    showToast('⏳ Slots check ho rahe hain...', 'success');
+    showToast('⏳ Checking available slots...', 'success');
     const dbSlots = await window.loadBookedSlotsFromDB(id);
     // Merge with local slots
     Object.assign(bookedSlots, dbSlots);
@@ -1430,7 +1432,7 @@ async function preSelectDoc(id) {
 
     // ☁️ Supabase se fresh slots load karo (refresh ke baad bhi kaam kare)
     if(window.loadBookedSlotsFromDB) {
-      showToast('⏳ Slots check ho rahe hain...', 'success');
+      showToast('⏳ Checking available slots...', 'success');
       const dbSlots = await window.loadBookedSlotsFromDB(id);
       Object.assign(bookedSlots, dbSlots);
       renderTimeSlots();
@@ -1625,12 +1627,12 @@ async function confirmBooking() {
 
   // ✅ Race condition check: Supabase se real-time verify karo ke slot abhi bhi available hai
   if(window.loadBookedSlotsFromDB) {
-    showToast('⏳ Slot verify ho raha hai...', 'success');
+    showToast('⏳ Verifying slot availability...', 'success');
     const freshSlots = await window.loadBookedSlotsFromDB(state.doctor);
     Object.assign(bookedSlots, freshSlots);
     const slotKeyCheck = `${state.date}|${state.time}|${state.doctor}`;
     if(bookedSlots[slotKeyCheck]) {
-      showToast('❌ Yeh slot abhi kisi ne book kar li! Koi aur time chunein.', 'error');
+      showToast('❌ This slot was just booked by someone else! Please choose another time.', 'error');
       renderTimeSlots();
       btn.disabled = false;
       btn.textContent = btnOriginalText;
@@ -1668,14 +1670,14 @@ async function confirmBooking() {
       // DB save fail ho gaya — success page mat dikhao, user ko clearly batao
       btn.disabled = false;
       btn.textContent = btnOriginalText;
-      showToast('⚠️ Booking save nahi hui. Internet check karein ya dobara try karein.', 'error');
+      showToast('⚠️ Booking could not be saved. ' + (window.lastSaveError ? 'Reason: ' + window.lastSaveError : 'Check your internet and try again.'), 'error');
       return;
     }
   } else {
     // Backend hi load nahi hua (script block fail) — booking ko fail treat karo
     btn.disabled = false;
     btn.textContent = btnOriginalText;
-    showToast('⚠️ Booking system load nahi hua. Page reload kar ke dobara try karein.', 'error');
+    showToast('⚠️ Booking system failed to load. Please reload the page and try again.', 'error');
     return;
   }
 
@@ -1703,7 +1705,7 @@ async function confirmBooking() {
     <div class="summ-row"><span class="summ-key">Visit type</span><span class="summ-val">${type}</span></div>
     <div class="summ-row"><span class="summ-key">Fee</span><span class="summ-val">Rs. ${doc.fee.toLocaleString()}</span></div>`;
   showPage('success');
-  showToast('✓ Appointment confirm ho gai!', 'success');
+  showToast('✓ Appointment confirmed!', 'success');
 
   btn.disabled = false;
   btn.textContent = btnOriginalText;
@@ -1722,7 +1724,7 @@ async function confirmBooking() {
       fee:        'Rs. ' + doc.fee.toLocaleString(),
       cancelLink
     }).then(ok => {
-      if(ok) showToast('✓ Confirmation email send ho gai!', 'success');
+      if(ok) showToast('✓ Confirmation email sent!', 'success');
     });
   }
 }
@@ -1780,8 +1782,8 @@ async function executeCancellation() {
       doctorName: doc.name,
       date, time, ref
     }).then(ok => {
-      if(ok) showToast('Cancellation email send ho gai!', 'success');
-      else   showToast('Appointment cancel ho gai (email fail).', 'error');
+      if(ok) showToast('Cancellation email sent!', 'success');
+      else   showToast('Appointment cancelled (email failed to send).', 'error');
     });
   }
   currentBooking = null;
@@ -1790,12 +1792,12 @@ async function executeCancellation() {
   document.getElementById('success-summary').innerHTML = `
     <div style="text-align:center;padding:20px;color:var(--red)">
       <div style="font-size:40px;margin-bottom:12px">❌</div>
-      <div style="font-size:18px;font-weight:700;">Appointment Cancel Ho Gai</div>
-      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">Aapko email mein cancellation confirmation mil jayegi.</div>
+      <div style="font-size:18px;font-weight:700;">Appointment Cancelled</div>
+      <div style="font-size:14px;color:var(--text-muted);margin-top:6px;">A cancellation confirmation will be sent to your email.</div>
     </div>`;
 
   document.querySelector('.success-wrap h1').textContent = 'Appointment Cancelled';
-  document.querySelector('.success-wrap > p').textContent = 'Aapki appointment successfully cancel ho gai hai.';
+  document.querySelector('.success-wrap > p').textContent = 'Your appointment has been cancelled successfully.';
   document.getElementById('ref-number').textContent = ref + ' (CANCELLED)';
   document.getElementById('ref-number').style.textDecoration = 'line-through';
   document.getElementById('ref-number').style.color = 'var(--red)';
@@ -1804,7 +1806,7 @@ async function executeCancellation() {
   const cancelBtn = document.querySelector('.btn-cancel');
   if(cancelBtn) cancelBtn.style.display = 'none';
 
-  showToast('✓ Appointment cancel ho gai!', 'success');
+  showToast('✓ Appointment cancelled!', 'success');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1889,20 +1891,20 @@ async function executeManageCancellation() {
       time: manageBooking.time,
       ref:  manageBooking.ref_number
     }).then(ok => {
-      if(ok) showToast('Cancellation email send ho gai!', 'success');
-      else   showToast('Appointment cancel ho gai (email fail).', 'error');
+      if(ok) showToast('Cancellation email sent!', 'success');
+      else   showToast('Appointment cancelled (email failed to send).', 'error');
     });
   }
 
   document.getElementById('manage-title').textContent = 'Appointment cancelled';
-  document.getElementById('manage-subtitle').textContent = 'Aapki appointment successfully cancel ho gai hai. Confirmation email aa jayegi.';
+  document.getElementById('manage-subtitle').textContent = 'Your appointment has been cancelled successfully. A confirmation email is on its way.';
   document.getElementById('manage-ref').textContent = manageBooking.ref_number + ' (CANCELLED)';
   document.getElementById('manage-ref').style.textDecoration = 'line-through';
   document.getElementById('manage-ref').style.color = 'var(--red)';
   document.getElementById('manage-cancel-btn').style.display = 'none';
   manageBooking = null;
 
-  showToast('✓ Appointment cancel ho gai!', 'success');
+  showToast('✓ Appointment cancelled!', 'success');
 }
 
 async function sendContact() {
@@ -1917,11 +1919,11 @@ async function sendContact() {
   const message = msgEl?.value.trim();
 
   if(!name || !email || !message) {
-    showToast('⚠️ Name, email aur message zaroor bharo.', 'error');
+    showToast('⚠️ Please fill in your name, email and message.', 'error');
     return;
   }
   if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    showToast('⚠️ Valid email address likhein.', 'error');
+    showToast('⚠️ Please enter a valid email address.', 'error');
     return;
   }
 
@@ -1935,13 +1937,13 @@ async function sendContact() {
   if(btn) { btn.disabled = false; btn.textContent = 'Send message →'; }
 
   if(ok) {
-    showToast('✓ Message send ho gaya! 24 ghante mein reply milegi.', 'success');
+    showToast('✓ Message sent! You will get a reply within 24 hours.', 'success');
     if(nameEl)    nameEl.value = '';
     if(emailEl)   emailEl.value = '';
     if(msgEl)     msgEl.value = '';
     if(subjectEl) subjectEl.selectedIndex = 0;
   } else {
-    showToast('❌ Message send nahi hua. Dobara try karein.', 'error');
+    showToast('❌ Message could not be sent. Please try again.', 'error');
   }
 }
 
