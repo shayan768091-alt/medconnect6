@@ -537,6 +537,35 @@ nav {
 .review-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .review-loc { font-size: 12px; color: var(--text-muted); }
 
+/* REVIEW FORM */
+.review-form-card {
+  background: white; border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 28px; max-width: 620px; margin: 36px auto 0;
+}
+.review-form-card h3 { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.review-form-card .rf-sub { font-size: 13px; color: var(--text-muted); margin-bottom: 18px; }
+.rf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.review-form-card input, .review-form-card textarea {
+  width: 100%; padding: 11px 14px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); font-size: 14px; font-family: 'Inter', sans-serif;
+  color: var(--text); background: #FAFBFC;
+}
+.review-form-card input:focus, .review-form-card textarea:focus { outline: none; border-color: var(--blue); background: white; }
+.review-form-card textarea { resize: vertical; min-height: 90px; margin-bottom: 12px; }
+.rf-stars { display: flex; gap: 6px; margin-bottom: 14px; align-items: center; }
+.rf-stars .rf-label { font-size: 13px; color: var(--text-muted); margin-right: 6px; }
+.rf-star { font-size: 26px; color: #D1D5DB; cursor: pointer; transition: color 0.1s, transform 0.1s; user-select: none; }
+.rf-star:hover { transform: scale(1.15); }
+.rf-star.active { color: var(--amber); }
+.rf-submit {
+  background: var(--blue); color: white; border: none; border-radius: var(--radius-sm);
+  padding: 12px 26px; font-size: 14px; font-weight: 600; cursor: pointer;
+  font-family: 'Inter', sans-serif; transition: background 0.15s;
+}
+.rf-submit:hover { background: var(--blue-dark); }
+.rf-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+@media (max-width: 640px) { .rf-row { grid-template-columns: 1fr; } }
+
 /* CTA BAND */
 .cta-band {
   background: linear-gradient(135deg, #0D52A8, #1A6FDB);
@@ -973,10 +1002,25 @@ footer { background: #111827; color: white; padding: 60px 24px 30px; }
         <p class="eyebrow">Patient stories</p>
         <h2>What our patients say</h2>
       </div>
-      <div class="reviews-grid">
+      <div class="reviews-grid" id="reviews-grid">
         <div class="review-card"><div class="review-stars">★★★★★</div><p class="review-text">"Booking was effortless — I found a cardiologist, picked a slot, and got confirmed in under 3 minutes. The doctor was wonderful and thorough."</p><div class="review-author"><div class="review-av" style="background:#DBEAFE;color:#1D4ED8">FA</div><div><div class="review-name">Fatima Ashraf</div><div class="review-loc">Lahore</div></div></div></div>
         <div class="review-card"><div class="review-stars">★★★★★</div><p class="review-text">"I was nervous about my child's appointment but the pediatrician Dr. Sara Malik was incredibly patient and kind. Will definitely use MedConnect again."</p><div class="review-author"><div class="review-av" style="background:#D1FAE5;color:#065F46">ZK</div><div><div class="review-name">Zainab Khan</div><div class="review-loc">Karachi</div></div></div></div>
         <div class="review-card"><div class="review-stars">★★★★☆</div><p class="review-text">"The online booking saved me hours of waiting. Dr. Bilal was professional and the skin treatment he recommended cleared up my condition within weeks."</p><div class="review-author"><div class="review-av" style="background:#FEF3C7;color:#92400E">AR</div><div><div class="review-name">Ahmed Raza</div><div class="review-loc">Islamabad</div></div></div></div>
+      </div>
+
+      <div class="review-form-card">
+        <h3>Share your experience</h3>
+        <p class="rf-sub">Had an appointment through MedConnect? Your review will be published instantly.</p>
+        <div class="rf-row">
+          <input type="text" id="rv-name" placeholder="Your name *" maxlength="60">
+          <input type="text" id="rv-city" placeholder="Your city (e.g. Lahore)" maxlength="40">
+        </div>
+        <div class="rf-stars">
+          <span class="rf-label">Your rating *</span>
+          <span class="rf-star" data-v="1">★</span><span class="rf-star" data-v="2">★</span><span class="rf-star" data-v="3">★</span><span class="rf-star" data-v="4">★</span><span class="rf-star" data-v="5">★</span>
+        </div>
+        <textarea id="rv-text" placeholder="Write your review... *" maxlength="500"></textarea>
+        <button class="rf-submit" id="rv-submit" onclick="submitReview()">Publish review</button>
       </div>
     </div>
   </section>
@@ -1499,7 +1543,7 @@ function renderTimeSlots() {
       const taken = !!(slotKey && bookedSlots[slotKey]);
       const sel = state.time===t;
       if(taken) {
-        return `<div class="time-chip taken" title="Yeh slot book ho chuki hai">${t} <span aria-hidden="true">✓</span></div>`;
+        return `<div class="time-chip taken" title="This slot is already booked">${t} <span aria-hidden="true">✓</span></div>`;
       }
       return `<div class="time-chip${sel?' selected':''}" onclick="selectTime('${t}')">${t}</div>`;
     }).join('');
@@ -1866,7 +1910,7 @@ async function checkUrlForCancelRequest() {
 
   if(row.status === 'cancelled') {
     document.getElementById('manage-title').textContent = 'Already cancelled';
-    document.getElementById('manage-subtitle').textContent = 'Yeh appointment pehle hi cancel ho chuki hai.';
+    document.getElementById('manage-subtitle').textContent = 'This appointment has already been cancelled.';
     document.getElementById('manage-ref').style.textDecoration = 'line-through';
     document.getElementById('manage-ref').style.color = 'var(--red)';
     document.getElementById('manage-cancel-btn').style.display = 'none';
@@ -1957,6 +2001,69 @@ async function sendContact() {
     showToast('❌ Message could not be sent. Please try again.', 'error');
   }
 }
+
+// ════════ PATIENT REVIEWS (Supabase) ════════
+let rvRating = 0;
+const AV_COLORS = [['#DBEAFE','#1D4ED8'],['#D1FAE5','#065F46'],['#FEF3C7','#92400E'],['#FCE7F3','#9D174D'],['#EDE9FE','#5B21B6']];
+
+document.querySelectorAll('.rf-star').forEach(st => {
+  st.addEventListener('click', () => {
+    rvRating = parseInt(st.dataset.v, 10);
+    document.querySelectorAll('.rf-star').forEach(x => x.classList.toggle('active', parseInt(x.dataset.v,10) <= rvRating));
+  });
+});
+
+function escapeHTML(str){ const d = document.createElement('div'); d.textContent = str; return d.innerHTML; }
+
+function reviewCardHTML(r, idx) {
+  const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+  const initials = (r.name || '?').trim().split(/\s+/).map(w => w[0]).join('').substr(0,2).toUpperCase();
+  const [bg, fg] = AV_COLORS[idx % AV_COLORS.length];
+  return `<div class="review-card"><div class="review-stars">${stars}</div><p class="review-text">"${escapeHTML(r.text)}"</p><div class="review-author"><div class="review-av" style="background:${bg};color:${fg}">${escapeHTML(initials)}</div><div><div class="review-name">${escapeHTML(r.name)}</div><div class="review-loc">${escapeHTML(r.city || '')}</div></div></div></div>`;
+}
+
+async function loadReviewsFromDB() {
+  try {
+    const { data, error } = await _supa.from('reviews')
+      .select('name, city, rating, text')
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) throw error;
+    if (data && data.length) {
+      const grid = document.getElementById('reviews-grid');
+      grid.insertAdjacentHTML('afterbegin', data.map((r,i) => reviewCardHTML(r,i)).join(''));
+    }
+  } catch(e) { console.error('❌ Reviews load error:', e.message); }
+}
+loadReviewsFromDB();
+
+window.submitReview = async function() {
+  const name = document.getElementById('rv-name').value.trim();
+  const city = document.getElementById('rv-city').value.trim();
+  const text = document.getElementById('rv-text').value.trim();
+  if (!name || !text) { showToast('⚠️ Please enter your name and review.', 'error'); return; }
+  if (!rvRating)      { showToast('⚠️ Please select a star rating.', 'error'); return; }
+
+  const btn = document.getElementById('rv-submit');
+  btn.disabled = true; btn.textContent = 'Publishing...';
+  try {
+    const { error } = await _supa.from('reviews').insert([{ name, city, rating: rvRating, text }]);
+    if (error) throw error;
+    // Instantly show the new review at the top
+    document.getElementById('reviews-grid').insertAdjacentHTML('afterbegin', reviewCardHTML({name, city, rating: rvRating, text}, 0));
+    // Reset form
+    document.getElementById('rv-name').value = '';
+    document.getElementById('rv-city').value = '';
+    document.getElementById('rv-text').value = '';
+    rvRating = 0;
+    document.querySelectorAll('.rf-star').forEach(x => x.classList.remove('active'));
+    showToast('✓ Thank you! Your review has been published.', 'success');
+  } catch(e) {
+    console.error('❌ Review save error:', e.message);
+    showToast('⚠️ Review could not be published. Reason: ' + e.message, 'error');
+  }
+  btn.disabled = false; btn.textContent = 'Publish review';
+};
 
 function showToast(msg, type='success') {
   const t = document.getElementById('toast');
