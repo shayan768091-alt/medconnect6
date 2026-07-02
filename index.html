@@ -127,6 +127,15 @@ const _supa = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
 // ── DB: Appointment save karo
 window.saveAppointmentToDB = async function(data) {
   try {
+    // Agar isi slot ki koi purani CANCELLED booking maujood hai to usay pehle
+    // delete kar do, warna unique_slot constraint nayi booking rokta hai.
+    await _supa.from('appointments')
+      .delete()
+      .eq('doctor_id', data.doctorId)
+      .eq('date', data.date)
+      .eq('time', data.time)
+      .eq('status', 'cancelled');
+
     const { data: row, error } = await _supa.from('appointments').insert([{
       ref_number:     data.refNumber,
       doctor_id:      data.doctorId,
@@ -150,7 +159,9 @@ window.saveAppointmentToDB = async function(data) {
     return row.id;
   } catch(e) {
     console.error('❌ Supabase save error:', e.message);
-    window.lastSaveError = e.message || 'Unknown error';
+    window.lastSaveError = /unique_slot|duplicate key/i.test(e.message || '')
+      ? 'This slot is already booked. Please choose another time.'
+      : (e.message || 'Unknown error');
     return null;
   }
 };
